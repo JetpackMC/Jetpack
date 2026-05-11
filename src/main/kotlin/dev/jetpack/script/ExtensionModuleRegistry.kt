@@ -14,6 +14,7 @@ internal data class RegisteredModule(
     val name: String,
     val value: JetValue.JModule,
     val fields: Map<String, JetType>,
+    val dynamic: Boolean,
 )
 
 internal class ExtensionModuleRegistry {
@@ -24,6 +25,7 @@ internal class ExtensionModuleRegistry {
         val name: String,
         val value: JetValue.JModule,
         val fields: Map<String, JetType>,
+        val dynamic: Boolean,
     )
 
     val builtinRegistry: BuiltinRegistry = BuiltinRegistry.createDefault()
@@ -42,6 +44,7 @@ internal class ExtensionModuleRegistry {
         name: String,
         value: JetValue.JModule,
         fields: Map<String, JetType>,
+        dynamic: Boolean = false,
     ): RegistrationHandle {
         if (name in namedModules) {
             throw IllegalArgumentException("Module '$name' is already registered")
@@ -51,13 +54,14 @@ internal class ExtensionModuleRegistry {
         }
 
         val declaredType = JetType.TModule(fields)
-        val validatedValue = validateModule(name, value, declaredType)
+        val validatedValue = if (dynamic) value.withDeclaredType(declaredType) else validateModule(name, value, declaredType)
         val registration = ModuleRegistration(
             id = UUID.randomUUID(),
             owner = owner,
             name = name,
             value = validatedValue,
             fields = fields,
+            dynamic = dynamic,
         )
 
         builtinRegistry.registerModuleType(name, fields)
@@ -82,6 +86,7 @@ internal class ExtensionModuleRegistry {
             name = registration.name,
             value = registration.value,
             fields = registration.fields,
+            dynamic = registration.dynamic,
         )
     }
 

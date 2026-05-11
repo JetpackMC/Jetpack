@@ -7,4 +7,5 @@ data class ModuleSpec(
     val name: String,
     val value: JetValue.JModule,
     val fields: Map<String, JetType>,
+    val dynamic: Boolean = false,
 )

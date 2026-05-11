@@ -102,9 +102,9 @@ internal class ScriptImportBinder(
         return ok
     }
 
-    fun buildRuntimeImportBindings(module: ScriptModule): Map<String, JetValue.JModule> {
+    fun buildRuntimeImportBindings(module: ScriptModule): Map<String, JetValue> {
         val plan = buildImportPlan(module)
-        val bindings = linkedMapOf<String, JetValue.JModule>()
+        val bindings = linkedMapOf<String, JetValue>()
 
         for ((alias, targetModule) in plan.aliases) {
             val declaredType = buildModuleType(
@@ -123,14 +123,7 @@ internal class ScriptImportBinder(
             bindings[rootName] = buildModuleValue(node, rootName, buildModuleType(node, rootName, 0))
         }
 
-        for (stmt in module.stmts.filterIsInstance<Statement.Using>()) {
-            if (stmt.relativeDots == 0 && stmt.path.size == 1 && !stmt.recursive) {
-                val name = stmt.path[0]
-                val registration = extensions.namedModule(name) ?: continue
-                val alias = stmt.alias ?: name
-                bindings[alias] = registration.value
-            }
-        }
+        bindRegisteredModules(module, bindings)
 
         return bindings
     }
@@ -141,7 +134,7 @@ internal class ScriptImportBinder(
         modulesByCanonicalPath: Map<String, ScriptModule>,
         modulesByLogicalPath: Map<String, ScriptModule>,
     ): List<ScriptModule> {
-        if (stmt.relativeDots == 0 && stmt.path.size == 1 && !stmt.recursive && stmt.path[0] in extensions.namedModuleNames()) {
+        if (isRegisteredModuleUsing(stmt)) {
             return emptyList()
         }
         val pathSegments = UsingResolver.resolvePath(stmt, module.pathSegments)
@@ -177,17 +170,55 @@ internal class ScriptImportBinder(
             bindings[rootName] = buildModuleType(node, rootName, 0)
         }
 
-        for (stmt in module.stmts.filterIsInstance<Statement.Using>()) {
-            if (stmt.relativeDots == 0 && stmt.path.size == 1 && !stmt.recursive) {
-                val name = stmt.path[0]
-                val registration = extensions.namedModule(name) ?: continue
-                val alias = stmt.alias ?: name
-                if (alias in bindings) throw UsingError("Module '$alias' is already declared", stmt.line)
-                bindings[alias] = JetType.TModule(registration.fields)
-            }
-        }
+        bindRegisteredModuleTypes(module, bindings)
 
         return bindings
+    }
+
+    private fun isRegisteredModuleUsing(stmt: Statement.Using): Boolean {
+        if (stmt.relativeDots != 0 || stmt.recursive || stmt.path.isEmpty()) return false
+        val registration = extensions.namedModule(stmt.path[0]) ?: return false
+        return stmt.path.size == 1 || registration.dynamic
+    }
+
+    private fun bindRegisteredModules(module: ScriptModule, bindings: MutableMap<String, JetValue>) {
+        for (stmt in module.stmts.filterIsInstance<Statement.Using>()) {
+            if (!isRegisteredModuleUsing(stmt)) continue
+            val rootName = stmt.path[0]
+            val registration = extensions.namedModule(rootName) ?: continue
+            val alias = stmt.alias
+            if (alias != null) {
+                bindings[alias] = resolveRegisteredModulePath(registration.value, stmt.path.drop(1), stmt.line)
+            } else {
+                bindings[rootName] = registration.value
+            }
+        }
+    }
+
+    private fun bindRegisteredModuleTypes(module: ScriptModule, bindings: MutableMap<String, JetType>) {
+        for (stmt in module.stmts.filterIsInstance<Statement.Using>()) {
+            if (!isRegisteredModuleUsing(stmt)) continue
+            val rootName = stmt.path[0]
+            val registration = extensions.namedModule(rootName) ?: continue
+            val alias = stmt.alias ?: rootName
+            if (alias in bindings) {
+                if (stmt.alias == null && alias == rootName) continue
+                throw UsingError("Module '$alias' is already declared", stmt.line)
+            }
+            bindings[alias] = if (registration.dynamic) JetType.TUnknown else JetType.TModule(registration.fields)
+        }
+    }
+
+    private fun resolveRegisteredModulePath(value: JetValue, path: List<String>, line: Int): JetValue {
+        var current = value
+        for (segment in path) {
+            current = when (current) {
+                is JetValue.JModule -> current.getField(segment)
+                is JetValue.JObject -> current.getField(segment)
+                else -> null
+            } ?: throw UsingError("Using target member '$segment' does not exist", line)
+        }
+        return current
     }
 
     private fun buildImportPlan(module: ScriptModule): ImportPlan {

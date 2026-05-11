@@ -6,6 +6,7 @@ import dev.jetpack.command.JetpackMessages
 import dev.jetpack.config.PluginConfig
 import dev.jetpack.engine.parser.ast.JetType
 import dev.jetpack.engine.runtime.builtins.Builtin
+import dev.jetpack.engine.runtime.module.BukkitModule
 import dev.jetpack.engine.runtime.module.ModuleSpec
 import dev.jetpack.i18n.LocaleManager
 import dev.jetpack.engine.runtime.module.MathModule
@@ -101,9 +102,10 @@ class JetpackPlugin : JavaPlugin() {
         name: String,
         value: dev.jetpack.engine.runtime.JetValue.JModule,
         fields: Map<String, JetType>,
+        dynamic: Boolean = false,
     ): RegistrationHandle {
         require(server.isPrimaryThread) { "Jetpack extension updates must run on the primary server thread" }
-        val handle = scriptRunner.registerModule(owner, name, value, fields)
+        val handle = scriptRunner.registerModule(owner, name, value, fields, dynamic)
         markExtensionsDirty()
         return wrapHandle(handle)
     }
@@ -135,6 +137,7 @@ class JetpackPlugin : JavaPlugin() {
             StorageModule(storageService).spec(),
             TimeModule(this).spec(),
             RegexModule().spec(),
+            BukkitModule().spec(),
         )
         for (spec in specs) {
             registerModule(this, spec)
@@ -142,7 +145,7 @@ class JetpackPlugin : JavaPlugin() {
     }
 
     private fun registerModule(owner: Plugin, spec: ModuleSpec): RegistrationHandle =
-        registerModule(owner, spec.name, spec.value, spec.fields)
+        registerModule(owner, spec.name, spec.value, spec.fields, spec.dynamic)
 
     private fun flushExtensionReload() {
         if (!extensionReloadPending || !initialLoadComplete || extensionBatchDepth > 0) return

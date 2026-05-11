@@ -71,8 +71,9 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         name: String,
         value: JetValue.JModule,
         fields: Map<String, JetType>,
+        dynamic: Boolean = false,
     ): RegistrationHandle =
-        extensionRegistry.registerModule(owner, name, value, fields)
+        extensionRegistry.registerModule(owner, name, value, fields, dynamic)
 
     fun unregisterExtensions(owner: Plugin): Boolean =
         extensionRegistry.unregisterExtensions(owner)

@@ -10,6 +10,7 @@ import dev.jetpack.engine.parser.ast.toJetType
 import dev.jetpack.engine.parser.ast.toJetTypeOrNull
 import dev.jetpack.engine.runtime.JetValue.*
 import dev.jetpack.engine.runtime.builtins.BuiltinRegistry
+import dev.jetpack.engine.runtime.nativeapi.NativeBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -527,6 +528,7 @@ class Interpreter(
             val fieldVal = getModuleField(target, method, line)
             return callFunction(fieldVal, args, line, "Module member '$method'")
         }
+        NativeBridge.callMember(target, method, args)?.let { return it }
         builtins.resolveMethod(target, method)?.let { fn -> return fn(args) }
         if (target is JObject) {
             val fieldVal = getObjectField(target, method, line, "member")
@@ -792,6 +794,14 @@ class Interpreter(
         calleeLabel: String? = null,
     ): JetValue {
         return when (callee) {
+            is JObject -> {
+                NativeBridge.call(callee, args)
+                    ?: throw RuntimeError(
+                        calleeLabel?.let { "$it is not callable" }
+                            ?: "Value of type '${callee.typeName()}' is not callable",
+                        line,
+                    )
+            }
             is JBuiltin -> {
                 try {
                     callee.fn(args)
