@@ -1,0 +1,26 @@
+plugin:
+  reloaded: "Jetpack 已重新加载。"
+  config_reloaded: "配置已重新加载。"
+  scripts_reloaded: "脚本已重新加载。"
+  reload_failed: "Jetpack 重新加载失败。"
+  config_reload_failed: "配置重新加载失败。"
+  scripts_reload_failed: "脚本重新加载失败。"
+  loaded_summary: "已加载 {count} 个脚本。"
+  failed_summary: "有 {count} 个脚本加载失败。"
+  enabled_summary: "已启用 {count} 个脚本。"
+  disabled_summary: "已禁用 {count} 个脚本。"
+
+script:
+  enabled_message: "脚本 '{name}' 已启用。"
+  disabled_message: "脚本 '{name}' 已禁用。"
+  invalid: "'{name}' 不是有效的脚本。请检查该脚本是否存在且格式是否正确。"
+  list_header: "# Jetpack 脚本"
+  list_empty: "(空)"
+  error_label: "错误"
+  info_title_label: "标题"
+  info_description_label: "说明"
+  info_author_label: "作者"
+  info_version_label: "版本"
+
+command:
+  usage: "用法: /jetpack <enable|disable|list|info|reload>"

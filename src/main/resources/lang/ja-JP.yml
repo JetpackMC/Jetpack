@@ -1,0 +1,26 @@
+plugin:
+  reloaded: "Jetpackを再読み込みしました。"
+  config_reloaded: "設定を再読み込みしました。"
+  scripts_reloaded: "スクリプトを再読み込みしました。"
+  reload_failed: "Jetpackの再読み込みに失敗しました。"
+  config_reload_failed: "設定の再読み込みに失敗しました。"
+  scripts_reload_failed: "スクリプトの再読み込みに失敗しました。"
+  loaded_summary: "{count}個のスクリプトを読み込みました。"
+  failed_summary: "{count}個のスクリプトの読み込みに失敗しました。"
+  enabled_summary: "{count}個のスクリプトを有効にしました。"
+  disabled_summary: "{count}個のスクリプトを無効にしました。"
+
+script:
+  enabled_message: "スクリプト'{name}'を有効にしました。"
+  disabled_message: "スクリプト'{name}'を無効にしました。"
+  invalid: "'{name}'は有効なスクリプトではありません。スクリプトが存在し、形式が正しいか確認してください。"
+  list_header: "# Jetpack スクリプト"
+  list_empty: "(空)"
+  error_label: "エラー"
+  info_title_label: "タイトル"
+  info_description_label: "説明"
+  info_author_label: "作者"
+  info_version_label: "バージョン"
+
+command:
+  usage: "使い方: /jetpack <enable|disable|list|info|reload>"

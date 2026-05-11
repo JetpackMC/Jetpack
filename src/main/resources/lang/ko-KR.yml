@@ -1,0 +1,26 @@
+plugin:
+  reloaded: "Jetpack을 다시 불러왔습니다."
+  config_reloaded: "설정이 다시 로드되었습니다."
+  scripts_reloaded: "스크립트를 다시 불러왔습니다."
+  reload_failed: "Jetpack을 다시 로드하지 못했습니다."
+  config_reload_failed: "설정을 다시 로드하지 못했습니다."
+  scripts_reload_failed: "스크립트를 다시 로드하지 못했습니다."
+  loaded_summary: "{count}개의 스크립트를 불러왔습니다."
+  failed_summary: "{count}개의 스크립트를 불러오는데 실패하였습니다."
+  enabled_summary: "{count}개의 스크립트를 활성화하였습니다."
+  disabled_summary: "{count}개의 스크립트를 비활성화하였습니다."
+
+script:
+  enabled_message: "'{name}' 스크립트가 활성화 되었습니다."
+  disabled_message: "'{name}' 스크립트가 비활성화 되었습니다."
+  invalid: "'{name}'은(는) 유효하지 않은 스크립트입니다. 스크립트가 존재하거나 올바른 형식인지 확인해주세요."
+  list_header: "# Jetpack 스크립트"
+  list_empty: "(비어 있음)"
+  error_label: "오류"
+  info_title_label: "제목"
+  info_description_label: "설명"
+  info_author_label: "작성자"
+  info_version_label: "버전"
+
+command:
+  usage: "사용법: /jetpack <enable|disable|list|info|reload>"

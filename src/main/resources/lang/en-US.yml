@@ -1,0 +1,27 @@
+plugin:
+  reloaded: "Jetpack reloaded."
+  config_reloaded: "Config reloaded."
+  scripts_reloaded: "Scripts reloaded."
+  reload_failed: "Failed to reload Jetpack."
+  config_reload_failed: "Failed to reload config."
+  scripts_reload_failed: "Failed to reload scripts."
+  loaded_summary: "Loaded {count} script(s)."
+  failed_summary: "Failed to load {count} script(s)."
+  enabled_summary: "Enabled {count} script(s)."
+  disabled_summary: "Disabled {count} script(s)."
+
+script:
+  enabled_message: "'{name}' script has been enabled."
+  disabled_message: "'{name}' script has been disabled."
+  invalid: "'{name}' is not a valid script. Please check whether the script exists or has a valid format."
+  list_header: "# Jetpack Scripts"
+  list_empty: "(Empty)"
+  error_label: "ERROR"
+  info_title_label: "Title"
+  info_description_label: "Description"
+  info_author_label: "Author"
+  info_version_label: "Version"
+
+command:
+  usage: "Usage: /jetpack <enable|disable|list|info|reload>"
+  no_permission: "You do not have permission to use this Jetpack command."
