@@ -1,5 +1,5 @@
-## Description
-<!-- Describe the impact of the changes and explain the reasoning behind the modifications -->
+## Summary
+<!-- What changed and why? -->
 
 
 ## Type of Change
@@ -10,26 +10,15 @@
 - [ ] Chore (chore/)
 
 
-## Related Issues
-<!-- Mention issue numbers for bug/issue fixes using 'Closes #123' or 'Fixes #123' -->
-
-
-## Changes Made
-<!-- List the main changes made in this PR -->
--
--
--
-
-
-## Screenshots/Videos
-<!-- If applicable, add screenshots or videos to demonstrate the changes -->
-
-
-## Checklist
+## Self Check
 - [ ] Code follows the project's coding style
 - [ ] Self-review completed
 - [ ] Documentation updated (if necessary)
 
 
+## Related Issues
+<!-- Closes #123, Fixes #123, or leave blank. -->
+
+
 ## Additional Notes
-<!-- Any additional information that reviewers should know -->
+<!-- Anything else reviewers should know. -->
