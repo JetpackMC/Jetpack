@@ -7,7 +7,6 @@ Thank you for your interest in contributing to Jetpack!
   - [Branch](#branch)
     - [Branch Naming Convention](#branch-naming-convention)
     - [Branch Naming Guidelines](#branch-naming-guidelines)
-    - [Reserved Branches](#reserved-branches)
   - [Pull Request](#pull-request)
     - [PR Title Guidelines](#pr-title-guidelines)
     - [PR Description Guidelines](#pr-description-guidelines)
@@ -33,13 +32,11 @@ We follow a specific naming convention for branches to maintain clarity and orga
 - Clearly identify the specific component, feature, or issue
 - If most of the work came from an AI Agent (often called Vibe Coding), please use `agents/Prefix/...` where `Prefix` matches the change category (for example, `features`, `bugs`, `refactor`, `hotfix`, `chore`)
 
-### Reserved Branches
-- `develop` is reserved for maintainers and is not available for external contributors
-- It is used for integration testing and small development-stage changes
-- `develop` changes are fast-moving and may be unstable
-
 
 ## Pull Request
+Please submit Pull Requests to the `develop` branch whenever possible.
+
+The `develop` branch is used as the main integration branch for reviewing and testing incoming changes before they are merged into the stable branch.
 
 ### PR Title Guidelines
 - Focus on the main functionality being modified
