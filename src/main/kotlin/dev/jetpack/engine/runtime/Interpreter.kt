@@ -48,7 +48,11 @@ private class DetachedListenerHandle(
     override fun isActive(): Boolean = !destroyed && active
 }
 
-class RuntimeError(message: String, val line: Int) : Exception(message)
+class RuntimeError(
+    message: String,
+    val line: Int,
+    val exceptionType: String = "RuntimeException",
+) : Exception(message)
 
 private fun formatArity(requiredCount: Int, totalCount: Int): String =
     if (requiredCount == totalCount) "$totalCount arguments" else "$requiredCount..$totalCount arguments"
@@ -129,7 +133,7 @@ class CommandNode(
         for ((i, param) in params.withIndex()) {
             val value = args.getOrNull(i)
                 ?: param.default?.invoke()
-                ?: throw RuntimeError("Missing required parameter '${param.name}'", param.line)
+                ?: throw RuntimeError("Missing required parameter '${param.name}'", param.line, "ArgumentException")
             val coercedValue = coerceValueToType(value, param.declaredType)
             invocationScope.defineCoerced(
                 param.name,
@@ -155,6 +159,7 @@ class CommandNode(
             throw RuntimeError(
                 "Command '$name' expects ${formatArity(requiredCount, params.size)} but got ${args.size}",
                 line,
+                "ArgumentException",
             )
         }
         val invocationArgs = args.take(params.size)
@@ -169,10 +174,10 @@ class CommandNode(
                     return
                 }
             }
-            throw RuntimeError("Command '$name' received unexpected subcommand '$next'", line)
+            throw RuntimeError("Command '$name' received unexpected subcommand '$next'", line, "ArgumentException")
         }
         if (remainingArgs.isNotEmpty()) {
-            throw RuntimeError("Command '$name' received unexpected arguments", line)
+            throw RuntimeError("Command '$name' received unexpected arguments", line, "ArgumentException")
         }
         executeDefault(invocationScope)
     }
@@ -278,6 +283,7 @@ class Interpreter(
             is Statement.IfStmt -> executeIf(stmt, scope)
             is Statement.WhileStmt -> executeWhile(stmt, scope)
             is Statement.ForEachStmt -> executeForEach(stmt, scope)
+            is Statement.TryStmt -> executeTry(stmt, scope)
             is Statement.ReturnStmt -> {
                 val value = stmt.value?.let { evalExpr(it, scope) } ?: JNull
                 throw ReturnSignal(value)
@@ -287,6 +293,85 @@ class Interpreter(
             is Statement.Metadata, is Statement.Using, is Statement.Manifest, is Statement.CommandDecl -> Unit
         }
     }
+
+    private suspend fun executeTry(stmt: Statement.TryStmt, scope: Scope) {
+        var pending: Throwable? = null
+
+        try {
+            executeBlock(stmt.tryBody, scope.child())
+        } catch (failure: Throwable) {
+            pending = handleTryFailure(failure, stmt, scope)
+        }
+
+        val finallyBody = stmt.finallyBody
+        if (finallyBody != null) {
+            try {
+                executeBlock(finallyBody, scope.child())
+            } catch (failure: Throwable) {
+                pending = failure
+            }
+        }
+
+        pending?.let { throw it }
+    }
+
+    private suspend fun handleTryFailure(
+        failure: Throwable,
+        stmt: Statement.TryStmt,
+        scope: Scope,
+    ): Throwable? {
+        if (failure !is RuntimeError) return failure
+
+        val catchClause = stmt.catches.firstOrNull { matchesException(failure, it.exceptionType) }
+            ?: return failure
+
+        return try {
+            val catchScope = scope.child()
+            catchClause.variableName?.let { name ->
+                catchScope.defineReadOnly(name, buildExceptionObject(failure))
+            }
+            executeBlock(catchClause.body, catchScope)
+            null
+        } catch (catchFailure: Throwable) {
+            catchFailure
+        }
+    }
+
+    private fun matchesException(error: RuntimeError, expectedType: String?): Boolean {
+        if (expectedType == null) return true
+        var current: String? = error.exceptionType
+        while (current != null) {
+            if (current == expectedType) return true
+            current = exceptionSupertype(current)
+        }
+        return false
+    }
+
+    private fun exceptionSupertype(type: String): String? = when (type) {
+        "TypeException",
+        "NameException",
+        "IndexException",
+        "KeyException",
+        "ArgumentException",
+        "ArithmeticException",
+        "StateException",
+        "PermissionException",
+        "NativeException",
+        "ModuleException" -> "RuntimeException"
+        "RuntimeException" -> "Exception"
+        "Exception" -> null
+        else -> "RuntimeException"
+    }
+
+    private fun buildExceptionObject(error: RuntimeError): JObject =
+        JObject(
+            fields = linkedMapOf(
+                "type" to JString(error.exceptionType),
+                "message" to JString(error.message ?: ""),
+                "line" to JInt(error.line),
+            ),
+            isReadOnly = true,
+        )
 
     private fun declareFunction(stmt: Statement.FunctionDecl, scope: Scope) {
         val fn = JFunction(stmt.params, stmt.body, scope, stmt.returnType?.toJetType())
@@ -454,7 +539,11 @@ class Interpreter(
                       catch (_: ContinueSignal) { continue }
                 }
             }
-            else -> throw RuntimeError("Cannot iterate over value of type '${iterable.typeName()}'", stmt.line)
+            else -> throw RuntimeError(
+                "Cannot iterate over value of type '${iterable.typeName()}'",
+                stmt.line,
+                "TypeException",
+            )
         }
     }
 
@@ -528,13 +617,27 @@ class Interpreter(
             val fieldVal = getModuleField(target, method, line)
             return callFunction(fieldVal, args, line, "Module member '$method'")
         }
-        NativeBridge.callMember(target, method, args)?.let { return it }
-        builtins.resolveMethod(target, method)?.let { fn -> return fn(args) }
+        try {
+            NativeBridge.callMember(target, method, args)?.let { return it }
+        } catch (e: RuntimeException) {
+            throw RuntimeError(e.message ?: "Native method call failed", line, "NativeException")
+        }
+        builtins.resolveMethod(target, method)?.let { fn ->
+            try {
+                return fn(args)
+            } catch (e: RuntimeException) {
+                throw RuntimeError(e.message ?: "Builtin method call failed", line, "RuntimeException")
+            }
+        }
         if (target is JObject) {
             val fieldVal = getObjectField(target, method, line, "member")
             return callFunction(fieldVal, args, line, "Object member '$method'")
         }
-        throw RuntimeError("Runtime value of type '${target.typeName()}' does not support method '$method'", line)
+        throw RuntimeError(
+            "Runtime value of type '${target.typeName()}' does not support method '$method'",
+            line,
+            "TypeException",
+        )
     }
 
     private suspend fun executeThreadOwnedStatement(stmt: Statement, scope: Scope) {
@@ -543,20 +646,24 @@ class Interpreter(
                 is Statement.IfStmt -> executeIf(stmt, scope)
                 is Statement.WhileStmt -> executeWhile(stmt, scope)
                 is Statement.ForEachStmt -> executeForEach(stmt, scope)
-                else -> throw RuntimeError("'thread' only supports block statements and function/method calls", stmt.line)
+                else -> throw RuntimeError(
+                    "'thread' only supports block statements and function/method calls",
+                    stmt.line,
+                    "TypeException",
+                )
             }
         } catch (_: ReturnSignal) {
-            throw RuntimeError("Return cannot escape a thread block", stmt.line)
+            throw RuntimeError("Return cannot escape a thread block", stmt.line, "StateException")
         } catch (_: BreakSignal) {
-            throw RuntimeError("Break cannot escape a thread block", stmt.line)
+            throw RuntimeError("Break cannot escape a thread block", stmt.line, "StateException")
         } catch (_: ContinueSignal) {
-            throw RuntimeError("Continue cannot escape a thread block", stmt.line)
+            throw RuntimeError("Continue cannot escape a thread block", stmt.line, "StateException")
         }
     }
 
     private suspend fun ensureThreadAllowed(line: Int) {
         if (coroutineContext[ThreadModeContext]?.insideThread == true) {
-            throw RuntimeError("Nested 'thread' execution is not allowed", line)
+            throw RuntimeError("Nested 'thread' execution is not allowed", line, "StateException")
         }
     }
 
@@ -580,9 +687,9 @@ class Interpreter(
 
     private suspend fun evalRange(expr: Expression.Range, scope: Scope): JetValue {
         val start = evalExpr(expr.start, scope) as? JInt
-            ?: throw RuntimeError("Range start must evaluate to int", expr.line)
+            ?: throw RuntimeError("Range start must evaluate to int", expr.line, "TypeException")
         val end = evalExpr(expr.end, scope) as? JInt
-            ?: throw RuntimeError("Range end must evaluate to int", expr.line)
+            ?: throw RuntimeError("Range end must evaluate to int", expr.line, "TypeException")
         return buildRangeList(start.value, end.value, expr.inclusive, expr.line)
     }
 
@@ -596,7 +703,7 @@ class Interpreter(
                 if (inclusive) Math.addExact(span, 1) else span
             }
         } catch (_: ArithmeticException) {
-            throw RuntimeError("Range size exceeds the maximum limit of ${Int.MAX_VALUE}", line)
+            throw RuntimeError("Range size exceeds the maximum limit of ${Int.MAX_VALUE}", line, "ArithmeticException")
         }
 
         val elements = ArrayList<JetValue>(rangeSize)
@@ -646,6 +753,7 @@ class Interpreter(
                         throw RuntimeError(
                             "Cannot concatenate lists with incompatible element types: '$expectedElement' and '${elem.typeName()}'",
                             expr.line,
+                            "TypeException",
                         )
                     }
                 }
@@ -661,18 +769,19 @@ class Interpreter(
             }
             op == TokenType.STAR && left is JString && right is JInt -> {
                 val count = right.value
-                if (count < 0) throw RuntimeError("String repetition count cannot be negative", expr.line)
+                if (count < 0) throw RuntimeError("String repetition count cannot be negative", expr.line, "ArgumentException")
                 JString(left.value.repeat(count))
             }
             op == TokenType.STAR && left is JInt && right is JString -> {
                 val count = left.value
-                if (count < 0) throw RuntimeError("String repetition count cannot be negative", expr.line)
+                if (count < 0) throw RuntimeError("String repetition count cannot be negative", expr.line, "ArgumentException")
                 JString(right.value.repeat(count))
             }
             left.isNumeric() && right.isNumeric() -> evalNumericOp(left, right, op, expr.line)
             else -> throw RuntimeError(
                 "Operator '${expr.operator.value}' cannot be applied to types '${left.typeName()}' and '${right.typeName()}'",
-                expr.line
+                expr.line,
+                "TypeException",
             )
         }
     }
@@ -689,11 +798,11 @@ class Interpreter(
                 TokenType.MINUS -> JInt(li - ri)
                 TokenType.STAR -> JInt(li * ri)
                 TokenType.SLASH -> {
-                    if (ri == 0) throw RuntimeError("Division by zero", line)
+                    if (ri == 0) throw RuntimeError("Division by zero", line, "ArithmeticException")
                     JInt(li / ri)
                 }
                 TokenType.PERCENT -> {
-                    if (ri == 0) throw RuntimeError("Division by zero", line)
+                    if (ri == 0) throw RuntimeError("Division by zero", line, "ArithmeticException")
                     JInt(li % ri)
                 }
                 TokenType.STAR_STAR -> {
@@ -704,7 +813,7 @@ class Interpreter(
                 TokenType.LT_EQ -> JBool(li <= ri)
                 TokenType.GT -> JBool(li > ri)
                 TokenType.GT_EQ -> JBool(li >= ri)
-                else -> throw RuntimeError("Unknown numeric operator '${op}'", line)
+                else -> throw RuntimeError("Unknown numeric operator '${op}'", line, "TypeException")
             }
         }
         val l = left.toNumericDouble()
@@ -714,11 +823,11 @@ class Interpreter(
             TokenType.MINUS -> JFloat(l - r)
             TokenType.STAR -> JFloat(l * r)
             TokenType.SLASH -> {
-                if (r == 0.0) throw RuntimeError("Division by zero", line)
+                if (r == 0.0) throw RuntimeError("Division by zero", line, "ArithmeticException")
                 JFloat(l / r)
             }
             TokenType.PERCENT -> {
-                if (r == 0.0) throw RuntimeError("Division by zero", line)
+                if (r == 0.0) throw RuntimeError("Division by zero", line, "ArithmeticException")
                 JFloat(l % r)
             }
             TokenType.STAR_STAR -> JFloat(Math.pow(l, r))
@@ -726,7 +835,7 @@ class Interpreter(
             TokenType.LT_EQ -> JBool(l <= r)
             TokenType.GT -> JBool(l > r)
             TokenType.GT_EQ -> JBool(l >= r)
-            else -> throw RuntimeError("Unknown numeric operator '${op}'", line)
+            else -> throw RuntimeError("Unknown numeric operator '${op}'", line, "TypeException")
         }
     }
 
@@ -740,7 +849,7 @@ class Interpreter(
                 val newVal = when (current) {
                     is JInt -> if (op == TokenType.PLUS_PLUS) JInt(current.value + 1) else JInt(current.value - 1)
                     is JFloat -> if (op == TokenType.PLUS_PLUS) JFloat(current.value + 1) else JFloat(current.value - 1)
-                    else -> throw RuntimeError("Operator '${expr.operator.value}' requires a numeric value", expr.line)
+                    else -> throw RuntimeError("Operator '${expr.operator.value}' requires a numeric value", expr.line, "TypeException")
                 }
                 val returnVal = if (expr.prefix) newVal else current
                 withScopeRuntimeError(expr.operand.line) {
@@ -752,7 +861,7 @@ class Interpreter(
             val newVal = when {
                 current is JInt -> if (op == TokenType.PLUS_PLUS) JInt(current.value + 1) else JInt(current.value - 1)
                 current is JFloat -> if (op == TokenType.PLUS_PLUS) JFloat(current.value + 1) else JFloat(current.value - 1)
-                else -> throw RuntimeError("Operator '${expr.operator.value}' requires a numeric value", expr.line)
+                else -> throw RuntimeError("Operator '${expr.operator.value}' requires a numeric value", expr.line, "TypeException")
             }
             val returnVal = if (expr.prefix) newVal else current
             assignTo(expr.operand, newVal, scope)
@@ -763,13 +872,13 @@ class Interpreter(
             TokenType.MINUS -> when (operand) {
                 is JInt -> JInt(-operand.value)
                 is JFloat -> JFloat(-operand.value)
-                else -> throw RuntimeError("Operator '-' requires a numeric value", expr.line)
+                else -> throw RuntimeError("Operator '-' requires a numeric value", expr.line, "TypeException")
             }
             TokenType.BANG -> {
-                if (operand is JNull) throw RuntimeError("Operator '!' cannot be applied to null", expr.line)
+                if (operand is JNull) throw RuntimeError("Operator '!' cannot be applied to null", expr.line, "TypeException")
                 JBool(!operand.isTruthy())
             }
-            else -> throw RuntimeError("Unknown unary operator '${expr.operator.value}'", expr.line)
+            else -> throw RuntimeError("Unknown unary operator '${expr.operator.value}'", expr.line, "TypeException")
         }
     }
 
@@ -795,18 +904,23 @@ class Interpreter(
     ): JetValue {
         return when (callee) {
             is JObject -> {
-                NativeBridge.call(callee, args)
-                    ?: throw RuntimeError(
+                val result = try {
+                    NativeBridge.call(callee, args)
+                } catch (e: RuntimeException) {
+                    throw RuntimeError(e.message ?: "Native call failed", line, "NativeException")
+                }
+                result ?: throw RuntimeError(
                         calleeLabel?.let { "$it is not callable" }
                             ?: "Value of type '${callee.typeName()}' is not callable",
                         line,
+                        "TypeException",
                     )
             }
             is JBuiltin -> {
                 try {
                     callee.fn(args)
                 } catch (e: RuntimeException) {
-                    throw RuntimeError(e.message ?: "Builtin call failed", line)
+                    throw RuntimeError(e.message ?: "Builtin call failed", line, "RuntimeException")
                 }
             }
             is JFunction -> {
@@ -815,13 +929,14 @@ class Interpreter(
                     throw RuntimeError(
                         "Function expects ${formatArity(requiredCount, callee.params.size)} but got ${args.size}",
                         line,
+                        "ArgumentException",
                     )
                 }
                 val fnScope = callee.closure.child()
                 for ((i, param) in callee.params.withIndex()) {
                     val argVal = args.getOrNull(i)
                         ?: param.default?.let { evalExpr(it, callee.closure) }
-                        ?: throw RuntimeError("Missing required parameter '${param.name}'", line)
+                        ?: throw RuntimeError("Missing required parameter '${param.name}'", line, "ArgumentException")
                     val expectedType = callee.resolvedParamTypes[i]
                     val coercedArg = coerceValueToType(argVal, expectedType)
                     val actualType = runtimeTypeOf(coercedArg)
@@ -829,6 +944,7 @@ class Interpreter(
                         throw RuntimeError(
                             "Parameter '${param.name}' expected '$expectedType' but got '$actualType'",
                             line,
+                            "ArgumentException",
                         )
                     }
                     fnScope.defineCoerced(param.name, coercedArg, declaredType = expectedType)
@@ -844,6 +960,7 @@ class Interpreter(
             else -> throw RuntimeError(
                 calleeLabel?.let { "$it is not callable" } ?: "Value of type '${callee.typeName()}' is not callable",
                 line,
+                "TypeException",
             )
         }
     }
@@ -854,10 +971,11 @@ class Interpreter(
             is JModule -> getModuleField(target, expr.member, expr.line)
             is JObject -> getObjectField(target, expr.member, expr.line, "member")
             is JCommand -> target.subcommands[expr.member]
-                ?: throw RuntimeError("Command subcommand '${expr.member}' does not exist", expr.line)
+                ?: throw RuntimeError("Command subcommand '${expr.member}' does not exist", expr.line, "KeyException")
             else -> throw RuntimeError(
                 "Runtime value of type '${target.typeName()}' does not support member access '${expr.member}'",
-                expr.line
+                expr.line,
+                "TypeException",
             )
         }
     }
@@ -867,27 +985,28 @@ class Interpreter(
         val index = evalExpr(expr.index, scope)
         return when (target) {
             is JList -> {
-                if (index !is JInt) throw RuntimeError("List index must be an integer", expr.line)
+                if (index !is JInt) throw RuntimeError("List index must be an integer", expr.line, "TypeException")
                 val i = index.value.toInt()
-                if (i < 0 || i >= target.elements.size) throw RuntimeError("List index is out of range", expr.line)
+                if (i < 0 || i >= target.elements.size) throw RuntimeError("List index is out of range", expr.line, "IndexException")
                 target.elements[i]
             }
             is JString -> {
-                if (index !is JInt) throw RuntimeError("String index must be an integer", expr.line)
+                if (index !is JInt) throw RuntimeError("String index must be an integer", expr.line, "TypeException")
                 val i = index.value.toInt()
-                if (i < 0 || i >= target.value.length) throw RuntimeError("String index is out of range", expr.line)
+                if (i < 0 || i >= target.value.length) throw RuntimeError("String index is out of range", expr.line, "IndexException")
                 JString(target.value[i].toString())
             }
             is JObject -> {
                 val key = when (index) {
                     is JString -> index.value
-                    else -> throw RuntimeError("Object key must be a string", expr.line)
+                    else -> throw RuntimeError("Object key must be a string", expr.line, "TypeException")
                 }
                 getObjectField(target, key, expr.line, "key")
             }
             else -> throw RuntimeError(
                 "Runtime value of type '${target.typeName()}' does not support index access",
-                expr.line
+                expr.line,
+                "TypeException",
             )
         }
     }
@@ -913,7 +1032,7 @@ class Interpreter(
                 JString(current.value + right.value)
             op == TokenType.STAR_ASSIGN && current is JString && right is JInt -> {
                 val count = right.value
-                if (count < 0) throw RuntimeError("String repetition count cannot be negative", expr.line)
+                if (count < 0) throw RuntimeError("String repetition count cannot be negative", expr.line, "ArgumentException")
                 JString(current.value.repeat(count))
             }
             op == TokenType.PLUS_ASSIGN && current is JList && right is JList -> {
@@ -924,6 +1043,7 @@ class Interpreter(
                         throw RuntimeError(
                             "Cannot concatenate lists with incompatible element types: '$expectedElement' and '${elem.typeName()}'",
                             expr.line,
+                            "TypeException",
                         )
                     }
                 }
@@ -945,7 +1065,7 @@ class Interpreter(
                     TokenType.SLASH_ASSIGN    -> TokenType.SLASH
                     TokenType.PERCENT_ASSIGN  -> TokenType.PERCENT
                     TokenType.STAR_STAR_ASSIGN -> TokenType.STAR_STAR
-                    else -> throw RuntimeError("Unknown compound assignment operator", expr.line)
+                    else -> throw RuntimeError("Unknown compound assignment operator", expr.line, "TypeException")
                 }
                 evalNumericOp(current, right, binaryOp, expr.line)
             }
@@ -965,12 +1085,12 @@ class Interpreter(
                     when (receiver) {
                         is JObject -> receiver.setField(target.member, value)
                         is JModule -> receiver.setField(target.member, value)
-                        else -> throw RuntimeError("Cannot assign member on non-object", target.line)
+                        else -> throw RuntimeError("Cannot assign member on non-object", target.line, "TypeException")
                     }
                 } catch (e: RuntimeError) {
                     throw e
                 } catch (e: RuntimeException) {
-                    throw RuntimeError(e.message ?: "Cannot assign member", target.line)
+                    throw RuntimeError(e.message ?: "Cannot assign member", target.line, "KeyException")
                 }
             }
             is Expression.IndexAccess -> {
@@ -979,18 +1099,19 @@ class Interpreter(
                 when (container) {
                     is JList -> {
                         if (container.isReadOnly) {
-                            throw RuntimeError("Cannot modify a read-only list", target.line)
+                            throw RuntimeError("Cannot modify a read-only list", target.line, "PermissionException")
                         }
-                        if (index !is JInt) throw RuntimeError("List index must be an integer", target.line)
+                        if (index !is JInt) throw RuntimeError("List index must be an integer", target.line, "TypeException")
                         val i = index.value.toInt()
                         if (i < 0 || i >= container.elements.size)
-                            throw RuntimeError("List index is out of range", target.line)
+                            throw RuntimeError("List index is out of range", target.line, "IndexException")
                         val anchor = firstNonNullListElement(container)
                         val expectedElement = describeListElementExpectation(container, anchor) ?: "unknown"
                         if (!listAcceptsValue(container, value, anchor)) {
                             throw RuntimeError(
                                 "Cannot assign '${value.typeName()}' to list of '$expectedElement'",
                                 target.line,
+                                "TypeException",
                             )
                         }
                         container.elements[i] = coerceValueForList(container, value, anchor)
@@ -999,20 +1120,20 @@ class Interpreter(
                     is JObject -> {
                         val key = when (index) {
                             is JString -> index.value
-                            else -> throw RuntimeError("Object key must be a string", target.line)
+                            else -> throw RuntimeError("Object key must be a string", target.line, "TypeException")
                         }
                         try {
                             container.setField(key, value)
                         } catch (e: RuntimeError) {
                             throw e
                         } catch (e: RuntimeException) {
-                            throw RuntimeError(e.message ?: "Cannot assign object member", target.line)
+                            throw RuntimeError(e.message ?: "Cannot assign object member", target.line, "KeyException")
                         }
                     }
-                    else -> throw RuntimeError("Cannot index-assign on type '${container.typeName()}'", target.line)
+                    else -> throw RuntimeError("Cannot index-assign on type '${container.typeName()}'", target.line, "TypeException")
                 }
             }
-            else -> throw RuntimeError("Invalid assignment target", target.line)
+            else -> throw RuntimeError("Invalid assignment target", target.line, "TypeException")
         }
     }
 
@@ -1020,7 +1141,16 @@ class Interpreter(
         try {
             return action()
         } catch (e: ScopeException) {
-            throw RuntimeError(e.message ?: "Scope error", line)
+            throw RuntimeError(e.message ?: "Scope error", line, scopeExceptionType(e))
+        }
+    }
+
+    private fun scopeExceptionType(error: ScopeException): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.startsWith("Undefined identifier") -> "NameException"
+            message.contains("cannot be modified") || message.contains("read-only") -> "PermissionException"
+            else -> "RuntimeException"
         }
     }
 
@@ -1030,7 +1160,7 @@ class Interpreter(
         nullMessage: String = "Condition cannot be null",
     ): JetValue {
         val value = evalExpr(expr, scope)
-        if (value is JNull) throw RuntimeError(nullMessage, expr.line)
+        if (value is JNull) throw RuntimeError(nullMessage, expr.line, "TypeException")
         return value
     }
 
@@ -1041,21 +1171,21 @@ class Interpreter(
         referenceKind: String,
     ): JetValue {
         try {
-            return target.getField(member) ?: throw RuntimeError("Object $referenceKind '$member' does not exist", line)
+            return target.getField(member) ?: throw RuntimeError("Object $referenceKind '$member' does not exist", line, "KeyException")
         } catch (e: RuntimeError) {
             throw e
         } catch (e: RuntimeException) {
-            throw RuntimeError(e.message ?: "Object access failed", line)
+            throw RuntimeError(e.message ?: "Object access failed", line, "KeyException")
         }
     }
 
     private fun getModuleField(target: JModule, member: String, line: Int): JetValue {
         try {
-            return target.getField(member) ?: throw RuntimeError("Module member '$member' does not exist", line)
+            return target.getField(member) ?: throw RuntimeError("Module member '$member' does not exist", line, "ModuleException")
         } catch (e: RuntimeError) {
             throw e
         } catch (e: RuntimeException) {
-            throw RuntimeError(e.message ?: "Module access failed", line)
+            throw RuntimeError(e.message ?: "Module access failed", line, "ModuleException")
         }
     }
 
@@ -1071,7 +1201,7 @@ class Interpreter(
                 try {
                     result = Math.multiplyExact(result, factor)
                 } catch (_: ArithmeticException) {
-                    throw RuntimeError("Integer overflow in '**' operation", line)
+                    throw RuntimeError("Integer overflow in '**' operation", line, "ArithmeticException")
                 }
             }
             exponent = exponent ushr 1
@@ -1079,7 +1209,7 @@ class Interpreter(
                 try {
                     factor = Math.multiplyExact(factor, factor)
                 } catch (_: ArithmeticException) {
-                    throw RuntimeError("Integer overflow in '**' operation", line)
+                    throw RuntimeError("Integer overflow in '**' operation", line, "ArithmeticException")
                 }
             }
         }

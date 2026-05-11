@@ -1,6 +1,7 @@
 package dev.jetpack.engine.resolver
 
 import dev.jetpack.event.JetpackEvent
+import dev.jetpack.engine.parser.ast.CatchClause
 import dev.jetpack.engine.parser.ast.CommandBodyItem
 import dev.jetpack.engine.parser.ast.Expression
 import dev.jetpack.engine.parser.ast.Statement
@@ -164,6 +165,17 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
                 isFileScope = prevFile
             }
 
+            is Statement.TryStmt -> {
+                val prevFile = isFileScope
+                isFileScope = false
+                resolveBlock(stmt.tryBody)
+                for (catchClause in stmt.catches) {
+                    resolveCatchClause(catchClause)
+                }
+                stmt.finallyBody?.let { resolveBlock(it) }
+                isFileScope = prevFile
+            }
+
             is Statement.ReturnStmt -> {
                 if (!insideFunction) error("Return cannot be used outside of a function", stmt.line)
                 stmt.value?.let { resolveExpr(it) }
@@ -191,6 +203,13 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
                 isFileScope = prevFile
             }
         }
+    }
+
+    private fun resolveCatchClause(catchClause: CatchClause) {
+        pushScope()
+        catchClause.variableName?.let { declare(it, catchClause.line) }
+        for (bodyStmt in catchClause.body) resolveStmt(bodyStmt)
+        popScope()
     }
 
     private fun resolveCommandDecl(stmt: Statement.CommandDecl, inheritedSenderName: String?) {

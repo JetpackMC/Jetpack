@@ -256,6 +256,7 @@ class Parser(private val tokens: List<Token>) {
                         TokenType.KW_IF -> parseIfStmt(line)
                         TokenType.KW_WHILE -> parseWhileStmt(line)
                         TokenType.KW_FOREACH -> parseForEachStmt(line)
+                        TokenType.KW_TRY -> parseTryStmt(line)
                         TokenType.KW_RETURN -> parseReturnStmt(line)
                         TokenType.KW_BREAK -> { advance(); Statement.BreakStmt(line) }
                         TokenType.KW_CONTINUE -> { advance(); Statement.ContinueStmt(line) }
@@ -535,6 +536,57 @@ class Parser(private val tokens: List<Token>) {
             parseExpression()
         } else null
         return Statement.ReturnStmt(value, line)
+    }
+
+    private fun parseTryStmt(line: Int): Statement.TryStmt {
+        expect(TokenType.KW_TRY, "Expected 'try'")
+        val tryBody = parseBlock()
+        val catches = mutableListOf<CatchClause>()
+        var finallyBody: List<Statement>? = null
+        var fallbackCatchLine: Int? = null
+
+        skipNewlines()
+        while (check(TokenType.KW_CATCH)) {
+            if (fallbackCatchLine != null) {
+                throw ParseException("Catch after fallback catch is not allowed", peek().line)
+            }
+            val catchClause = parseCatchClause()
+            if (catchClause.exceptionType == null) {
+                fallbackCatchLine = catchClause.line
+            }
+            catches.add(catchClause)
+            skipNewlines()
+        }
+
+        if (check(TokenType.KW_FINALLY)) {
+            advance()
+            finallyBody = parseBlock()
+            skipNewlines()
+        }
+
+        if (catches.isEmpty() && finallyBody == null) {
+            throw ParseException("Try statement requires at least one catch or finally block", line)
+        }
+        return Statement.TryStmt(tryBody, catches, finallyBody, line)
+    }
+
+    private fun parseCatchClause(): CatchClause {
+        val line = peek().line
+        expect(TokenType.KW_CATCH, "Expected 'catch'")
+        var exceptionType: String? = null
+        var variableName: String? = null
+
+        if (check(TokenType.LPAREN)) {
+            advance()
+            exceptionType = expect(TokenType.IDENTIFIER, "Expected exception type in catch clause").value
+            if (check(TokenType.IDENTIFIER)) {
+                variableName = advance().value
+            }
+            expect(TokenType.RPAREN, "Expected ')' after catch clause")
+        }
+
+        val body = parseBlock()
+        return CatchClause(exceptionType, variableName, body, line)
     }
 
     private fun parseBlock(): List<Statement> {

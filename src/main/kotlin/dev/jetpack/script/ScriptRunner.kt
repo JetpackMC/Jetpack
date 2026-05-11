@@ -474,6 +474,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             throw RuntimeError(
                 "Command '${node.name}' expects ${formatArity(requiredCount, node.params.size)} but got ${args.size}",
                 node.line,
+                "ArgumentException",
             )
         }
         val converted = convertCommandArgs(node.params, args.take(node.params.size))
@@ -488,7 +489,11 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
                     return
                 }
             }
-            throw RuntimeError("Command '${node.name}' received unexpected argument '${remainingArgs[0]}'", node.line)
+            throw RuntimeError(
+                "Command '${node.name}' received unexpected argument '${remainingArgs[0]}'",
+                node.line,
+                "ArgumentException",
+            )
         }
 
         node.executeDefault(invocationScope)
@@ -500,6 +505,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
                 ?: throw RuntimeError(
                     "Parameter '${params[i].name}' expected ${params[i].typeName ?: "any"}, got '$raw'",
                     params[i].line,
+                    "ArgumentException",
                 )
         }
 

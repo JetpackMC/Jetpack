@@ -7,6 +7,23 @@ data class TypeCheckerError(val message: String, val line: Int)
 
 class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
 
+    companion object {
+        private val EXCEPTION_SUPERTYPES = mapOf(
+            "Exception" to null,
+            "RuntimeException" to "Exception",
+            "TypeException" to "RuntimeException",
+            "NameException" to "RuntimeException",
+            "IndexException" to "RuntimeException",
+            "KeyException" to "RuntimeException",
+            "ArgumentException" to "RuntimeException",
+            "ArithmeticException" to "RuntimeException",
+            "StateException" to "RuntimeException",
+            "PermissionException" to "RuntimeException",
+            "NativeException" to "RuntimeException",
+            "ModuleException" to "RuntimeException",
+        )
+    }
+
     private enum class FlowSignal {
         FALLTHROUGH,
         RETURN,
@@ -195,6 +212,14 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
                 popScope()
             }
 
+            is Statement.TryStmt -> {
+                checkBlock(stmt.tryBody)
+                for (catchClause in stmt.catches) {
+                    checkCatchClause(catchClause)
+                }
+                stmt.finallyBody?.let { checkBlock(it) }
+            }
+
             is Statement.ReturnStmt -> {
                 val expected = currentReturnType
                 if (expected != null && expected != JetType.TUnknown) {
@@ -215,6 +240,20 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
 
             is Statement.CommandDecl -> checkCommandDecl(stmt, stmt.senderName)
         }
+    }
+
+    private fun checkCatchClause(catchClause: CatchClause) {
+        val exceptionType = catchClause.exceptionType
+        if (exceptionType != null && exceptionType !in EXCEPTION_SUPERTYPES) {
+            errors.add(TypeCheckerError("Unknown exception type '$exceptionType'", catchClause.line))
+        }
+
+        pushScope()
+        catchClause.variableName?.let {
+            defineReadOnly(it, JetType.TObject, catchClause.line)
+        }
+        for (bodyStmt in catchClause.body) checkStmt(bodyStmt)
+        popScope()
     }
 
     private fun checkCommandDecl(stmt: Statement.CommandDecl, inheritedSenderName: String?) {
@@ -1040,6 +1079,7 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         }
         is Statement.WhileStmt,
         is Statement.ForEachStmt -> setOf(FlowSignal.NON_TERMINATING)
+        is Statement.TryStmt -> analyzeTryFlow(stmt)
         is Statement.Metadata,
         is Statement.Using,
         is Statement.Manifest,
@@ -1049,5 +1089,24 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         is Statement.IntervalDecl,
         is Statement.ListenerDecl,
         is Statement.CommandDecl -> setOf(FlowSignal.FALLTHROUGH)
+    }
+
+    private fun analyzeTryFlow(stmt: Statement.TryStmt): Set<FlowSignal> {
+        val outcomes = linkedSetOf<FlowSignal>()
+        outcomes.addAll(analyzeBlockFlow(stmt.tryBody))
+        for (catchClause in stmt.catches) {
+            outcomes.addAll(analyzeBlockFlow(catchClause.body))
+        }
+
+        val finallyBody = stmt.finallyBody ?: return outcomes
+        val finallyOutcomes = analyzeBlockFlow(finallyBody)
+        if (FlowSignal.FALLTHROUGH !in finallyOutcomes) {
+            return finallyOutcomes
+        }
+
+        val combined = linkedSetOf<FlowSignal>()
+        combined.addAll(outcomes)
+        combined.addAll(finallyOutcomes.filterNot { it == FlowSignal.FALLTHROUGH })
+        return combined
     }
 }

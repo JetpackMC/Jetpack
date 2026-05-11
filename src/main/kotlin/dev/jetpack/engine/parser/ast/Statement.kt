@@ -63,6 +63,12 @@ sealed class Statement {
         val body: List<Statement>,
         override val line: Int,
     ) : Statement()
+    data class TryStmt(
+        val tryBody: List<Statement>,
+        val catches: List<CatchClause>,
+        val finallyBody: List<Statement>?,
+        override val line: Int,
+    ) : Statement()
 
     data class ReturnStmt(val value: Expression?, override val line: Int) : Statement()
     data class BreakStmt(override val line: Int) : Statement()
@@ -103,6 +109,13 @@ sealed class CommandBodyItem {
 }
 
 data class Param(val typeName: TypeRef?, val name: String, val default: Expression? = null)
+
+data class CatchClause(
+    val exceptionType: String?,
+    val variableName: String?,
+    val body: List<Statement>,
+    val line: Int,
+)
 
 data class TypeRef(
     val name: String,
