@@ -1,0 +1,13 @@
+.gradle/
+.kotlin/
+build/
+out/
+bin/
+.settings/
+.classpath
+.project
+.idea/
+.vscode/
+*.class
+hs_err_pid*
+replay_pid*

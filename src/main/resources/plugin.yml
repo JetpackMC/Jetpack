@@ -1,0 +1,35 @@
+name: Jetpack
+description: Jetpack is a Minecraft plugin that lets you execute and apply scripts with ease.
+version: 1.0.0
+api-version: "1.21.10"
+authors:
+  - BACKGWA
+  - Jetpack Community
+main: dev.jetpack.JetpackPlugin
+
+commands:
+  jetpack:
+    description: Jetpack script management command
+    usage: /jetpack <enable|disable|list|info|reload>
+
+permissions:
+  jetpack.command.admin:
+    description: Grants access to every Jetpack command.
+    default: op
+    children:
+      jetpack.command.manage: true
+      jetpack.command.list: true
+      jetpack.command.info: true
+      jetpack.command.reload: true
+  jetpack.command.manage:
+    description: Allows enabling and disabling Jetpack scripts.
+    default: op
+  jetpack.command.list:
+    description: Allows listing Jetpack scripts.
+    default: op
+  jetpack.command.info:
+    description: Allows viewing Jetpack script information.
+    default: op
+  jetpack.command.reload:
+    description: Allows reloading Jetpack config and scripts.
+    default: op
