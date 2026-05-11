@@ -24,3 +24,4 @@ script:
 
 command:
   usage: "用法: /jetpack <enable|disable|list|info|reload>"
+  no_permission: "您没有权限使用此 Jetpack 命令。"
