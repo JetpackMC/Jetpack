@@ -16,6 +16,7 @@ import dev.jetpack.engine.runtime.module.RegexModule
 import dev.jetpack.engine.runtime.module.StorageModule
 import dev.jetpack.engine.runtime.module.StorageService
 import dev.jetpack.engine.runtime.module.TimeModule
+import dev.jetpack.engine.runtime.module.HttpModule
 import dev.jetpack.script.ScriptRegistry
 import dev.jetpack.script.ScriptRunner
 import net.kyori.adventure.text.Component
@@ -138,6 +139,7 @@ class JetpackPlugin : JavaPlugin() {
             TimeModule(this).spec(),
             RegexModule().spec(),
             BukkitModule().spec(),
+            HttpModule().spec(),
         )
         for (spec in specs) {
             registerModule(this, spec)
