@@ -238,6 +238,27 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
 
             is Statement.BreakStmt, is Statement.ContinueStmt -> Unit
 
+            is Statement.ObjectDestructuring -> {
+                val initType = inferExpr(stmt.initializer)
+                if (initType != JetType.TObject && initType != JetType.TUnknown) {
+                    errors.add(TypeCheckerError("Object destructuring requires an object, got '$initType'", stmt.line))
+                }
+                for (binding in stmt.bindings) {
+                    defineType(binding.localName, JetType.TUnknown, stmt.line, stmt.isConst)
+                }
+            }
+
+            is Statement.ListDestructuring -> {
+                val initType = inferExpr(stmt.initializer)
+                if (initType !is JetType.TList && initType != JetType.TUnknown) {
+                    errors.add(TypeCheckerError("List destructuring requires a list, got '$initType'", stmt.line))
+                }
+                val elementType = if (initType is JetType.TList) initType.elementType else JetType.TUnknown
+                for (name in stmt.bindings) {
+                    if (name != null) defineType(name, elementType, stmt.line, stmt.isConst)
+                }
+            }
+
             is Statement.CommandDecl -> checkCommandDecl(stmt, stmt.senderName)
         }
     }
@@ -675,6 +696,28 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
                 left == JetType.TInt && right == JetType.TInt -> JetType.TInt
                 else                                           -> JetType.TFloat
             }
+            op == TokenType.KW_IN -> {
+                if (isNullableType(left)) {
+                    errors.add(TypeCheckerError("Operator 'in' cannot be applied to nullable type '$left'", expr.line))
+                }
+                when {
+                    right is JetType.TList -> Unit
+                    right == JetType.TObject -> {
+                        if (left != JetType.TString && left != JetType.TUnknown) {
+                            errors.add(TypeCheckerError("'in' on object requires a string operand, got '$left'", expr.line))
+                        }
+                    }
+                    right == JetType.TString -> {
+                        if (left != JetType.TString && left != JetType.TUnknown) {
+                            errors.add(TypeCheckerError("'in' on string requires a string operand, got '$left'", expr.line))
+                        }
+                    }
+                    right != JetType.TUnknown -> {
+                        errors.add(TypeCheckerError("Operator 'in' cannot be applied to type '$right'", expr.line))
+                    }
+                }
+                JetType.TBool
+            }
             isNullableType(left) || isNullableType(right) -> {
                 val nullableType = if (isNullableType(left)) left else right
                 errors.add(TypeCheckerError(
@@ -1088,7 +1131,9 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         is Statement.FunctionDecl,
         is Statement.IntervalDecl,
         is Statement.ListenerDecl,
-        is Statement.CommandDecl -> setOf(FlowSignal.FALLTHROUGH)
+        is Statement.CommandDecl,
+        is Statement.ObjectDestructuring,
+        is Statement.ListDestructuring -> setOf(FlowSignal.FALLTHROUGH)
     }
 
     private fun analyzeTryFlow(stmt: Statement.TryStmt): Set<FlowSignal> {

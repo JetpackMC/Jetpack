@@ -290,6 +290,41 @@ class Interpreter(
             }
             is Statement.BreakStmt -> throw BreakSignal()
             is Statement.ContinueStmt -> throw ContinueSignal()
+            is Statement.ObjectDestructuring -> {
+                val obj = evalExpr(stmt.initializer, scope)
+                if (obj !is JObject) throw RuntimeError(
+                    "Object destructuring requires an object, got '${obj.typeName()}'",
+                    stmt.line, "TypeException",
+                )
+                for (binding in stmt.bindings) {
+                    val value = obj.getField(binding.fieldName)
+                        ?: throw RuntimeError(
+                            "Object field '${binding.fieldName}' does not exist",
+                            stmt.line, "KeyException",
+                        )
+                    withScopeRuntimeError(stmt.line) {
+                        scope.defineCoerced(binding.localName, value, stmt.isConst, null)
+                    }
+                }
+            }
+            is Statement.ListDestructuring -> {
+                val list = evalExpr(stmt.initializer, scope)
+                if (list !is JList) throw RuntimeError(
+                    "List destructuring requires a list, got '${list.typeName()}'",
+                    stmt.line, "TypeException",
+                )
+                for ((index, name) in stmt.bindings.withIndex()) {
+                    if (name == null) continue
+                    val value = list.elements.getOrNull(index)
+                        ?: throw RuntimeError(
+                            "List destructuring index $index is out of range (list has ${list.elements.size} elements)",
+                            stmt.line, "IndexException",
+                        )
+                    withScopeRuntimeError(stmt.line) {
+                        scope.defineCoerced(name, value, stmt.isConst, null)
+                    }
+                }
+            }
             is Statement.Metadata, is Statement.Using, is Statement.Manifest, is Statement.CommandDecl -> Unit
         }
     }
@@ -778,6 +813,32 @@ class Interpreter(
                 JString(right.value.repeat(count))
             }
             left.isNumeric() && right.isNumeric() -> evalNumericOp(left, right, op, expr.line)
+            op == TokenType.KW_IN -> when (right) {
+                is JList -> JBool(right.elements.any { jetEquals(left, it) })
+                is JObject -> {
+                    val key = (left as? JString)
+                        ?: throw RuntimeError(
+                            "'in' on object requires a string key, got '${left.typeName()}'",
+                            expr.line,
+                            "TypeException",
+                        )
+                    JBool(right.hasField(key.value))
+                }
+                is JString -> {
+                    val sub = (left as? JString)
+                        ?: throw RuntimeError(
+                            "'in' on string requires a string value, got '${left.typeName()}'",
+                            expr.line,
+                            "TypeException",
+                        )
+                    JBool(right.value.contains(sub.value))
+                }
+                else -> throw RuntimeError(
+                    "Operator 'in' cannot be applied to type '${right.typeName()}'",
+                    expr.line,
+                    "TypeException",
+                )
+            }
             else -> throw RuntimeError(
                 "Operator '${expr.operator.value}' cannot be applied to types '${left.typeName()}' and '${right.typeName()}'",
                 expr.line,

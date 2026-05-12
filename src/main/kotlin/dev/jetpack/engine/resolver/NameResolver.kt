@@ -202,6 +202,16 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
                 insideLoop = prevLoop
                 isFileScope = prevFile
             }
+
+            is Statement.ObjectDestructuring -> {
+                resolveExpr(stmt.initializer)
+                for (binding in stmt.bindings) declare(binding.localName, stmt.line)
+            }
+
+            is Statement.ListDestructuring -> {
+                resolveExpr(stmt.initializer)
+                for (name in stmt.bindings) if (name != null) declare(name, stmt.line)
+            }
         }
     }
 
