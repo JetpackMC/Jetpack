@@ -237,16 +237,20 @@ class Parser(private val tokens: List<Token>) {
             TokenType.KW_COMMAND -> parseCommandDecl(access ?: AccessModifier.PRIVATE, line, isRoot = true)
             TokenType.KW_CONST -> {
                 advance()
-                if (!isTypeKeyword(peekType())) {
+                if (peekType() == TokenType.LBRACE || peekType() == TokenType.LBRACKET) {
+                    parseDestructuring(access ?: AccessModifier.PRIVATE, isConst = true, line)
+                } else if (!isTypeKeyword(peekType())) {
                     throw ParseException("Const can only be used with variable declarations", line)
+                } else {
+                    parseVarDecl(access ?: AccessModifier.PRIVATE, isConst = true, line)
                 }
-                parseVarDecl(access ?: AccessModifier.PRIVATE, isConst = true, line)
             }
             else -> {
-                if (access != null && !isTypeKeyword(peekType())) {
+                if ((peekType() == TokenType.LBRACE || peekType() == TokenType.LBRACKET) && isDestructuringAhead()) {
+                    parseDestructuring(access ?: AccessModifier.PRIVATE, isConst = false, line)
+                } else if (access != null && !isTypeKeyword(peekType())) {
                     throw ParseException("Access modifier can only be used with top-level declarations", line)
-                }
-                if (isTypeKeyword(peekType())) {
+                } else if (isTypeKeyword(peekType())) {
                     parseVarDecl(access ?: AccessModifier.PRIVATE, isConst = false, line)
                 } else {
                     if (access != null) {
@@ -697,7 +701,7 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseComparison(): Expression {
         var left = parseRange()
-        while (peekType() in COMPARISON_OPS) {
+        while (peekType() in COMPARISON_OPS || peekType() == TokenType.KW_IN) {
             val op = advance()
             left = Expression.BinaryOp(left, op, parseRange(), op.line)
         }
@@ -1062,5 +1066,77 @@ class Parser(private val tokens: List<Token>) {
         }
         expect(TokenType.RBRACE, "Expected '}' to close object literal")
         return Expression.ObjectLiteral(entries, line)
+    }
+
+    private fun isDestructuringAhead(): Boolean {
+        val openType = peekType()
+        if (openType != TokenType.LBRACE && openType != TokenType.LBRACKET) return false
+        val closeType = if (openType == TokenType.LBRACE) TokenType.RBRACE else TokenType.RBRACKET
+        var i = pos + 1
+        var depth = 0
+        while (i < tokens.size) {
+            when (tokens[i].type) {
+                openType -> depth++
+                closeType -> {
+                    if (depth == 0) {
+                        i++
+                        while (i < tokens.size && (tokens[i].type == TokenType.NEWLINE || tokens[i].type == TokenType.SEMICOLON)) i++
+                        return i < tokens.size && tokens[i].type == TokenType.EQ
+                    }
+                    depth--
+                }
+                TokenType.EOF -> return false
+                else -> {}
+            }
+            i++
+        }
+        return false
+    }
+
+    private fun parseDestructuring(access: AccessModifier, isConst: Boolean, line: Int): Statement =
+        when (peekType()) {
+            TokenType.LBRACE -> parseObjectDestructuring(access, isConst, line)
+            TokenType.LBRACKET -> parseListDestructuring(access, isConst, line)
+            else -> throw ParseException("Expected '{' or '[' for destructuring", line)
+        }
+
+    private fun parseObjectDestructuring(access: AccessModifier, isConst: Boolean, line: Int): Statement.ObjectDestructuring {
+        expect(TokenType.LBRACE, "Expected '{'")
+        skipNewlines()
+        val bindings = mutableListOf<DestructuringBinding>()
+        while (!check(TokenType.RBRACE) && !isAtEnd()) {
+            val fieldName = expect(TokenType.IDENTIFIER, "Expected field name in object destructuring").value
+            val localName = if (check(TokenType.COLON)) {
+                advance()
+                expect(TokenType.IDENTIFIER, "Expected local variable name after ':' in object destructuring").value
+            } else {
+                fieldName
+            }
+            bindings.add(DestructuringBinding(fieldName, localName))
+            skipNewlines()
+            if (check(TokenType.COMMA)) { advance(); skipNewlines() }
+        }
+        expect(TokenType.RBRACE, "Expected '}' to close object destructuring")
+        expect(TokenType.EQ, "Expected '=' after object destructuring pattern")
+        val initializer = parseExpression()
+        return Statement.ObjectDestructuring(access, isConst, bindings, initializer, line)
+    }
+
+    private fun parseListDestructuring(access: AccessModifier, isConst: Boolean, line: Int): Statement.ListDestructuring {
+        expect(TokenType.LBRACKET, "Expected '['")
+        skipNewlines()
+        val bindings = mutableListOf<String?>()
+        while (!check(TokenType.RBRACKET) && !isAtEnd()) {
+            bindings.add(
+                if (check(TokenType.IDENTIFIER) && peek().value == "_") { advance(); null }
+                else expect(TokenType.IDENTIFIER, "Expected variable name or '_' in list destructuring").value
+            )
+            skipNewlines()
+            if (check(TokenType.COMMA)) { advance(); skipNewlines() }
+        }
+        expect(TokenType.RBRACKET, "Expected ']' to close list destructuring")
+        expect(TokenType.EQ, "Expected '=' after list destructuring pattern")
+        val initializer = parseExpression()
+        return Statement.ListDestructuring(access, isConst, bindings, initializer, line)
     }
 }
