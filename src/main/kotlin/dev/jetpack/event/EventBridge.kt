@@ -27,6 +27,8 @@ object EventBridge {
     private class EventBinding(
         val eventClassName: String,
         val eventClass: Class<out Event>,
+        val priority: EventPriority,
+        val ignoreCancelled: Boolean,
         val listener: Listener = object : Listener {},
         @Volatile var registered: Boolean = false,
     )
@@ -38,13 +40,18 @@ object EventBridge {
         plugin: JetpackPlugin,
         eventClassName: String,
         scriptFile: String,
+        priority: EventPriority,
+        ignoreCancelled: Boolean,
         callback: (JetValue) -> Unit,
     ): ListenerHandle {
         val eventClass = resolveEventClass(eventClassName)
         requireNotNull(eventClass) { "Unknown event type '$eventClassName'" }
-        val binding = bindings.computeIfAbsent(eventClassName) { EventBinding(eventClassName, eventClass) }
+        val bindingKey = bindingKey(eventClassName, priority, ignoreCancelled)
+        val binding = bindings.computeIfAbsent(bindingKey) {
+            EventBinding(eventClassName, eventClass, priority, ignoreCancelled)
+        }
         val entry = ListenerEntry(scriptFile, callback)
-        handlers.getOrPut(eventClassName) { CopyOnWriteArrayList() }.add(entry)
+        handlers.getOrPut(bindingKey) { CopyOnWriteArrayList() }.add(entry)
         reconcileBinding(plugin, binding)
 
         return object : ListenerHandle {
@@ -66,7 +73,7 @@ object EventBridge {
                 if (entry.destroyed) return false
                 entry.destroyed = true
                 entry.active = false
-                handlers[eventClassName]?.remove(entry)
+                handlers[bindingKey]?.remove(entry)
                 cleanupEmptyBinding(binding)
                 return true
             }
@@ -82,7 +89,7 @@ object EventBridge {
     }
 
     fun unregisterAll(scriptFile: String) {
-        for ((eventClassName, list) in handlers) {
+        for ((bindingKey, list) in handlers) {
             val removed = list.removeAll { entry ->
                 if (entry.scriptFile != scriptFile) return@removeAll false
                 entry.destroyed = true
@@ -90,7 +97,7 @@ object EventBridge {
                 true
             }
             if (removed) {
-                bindings[eventClassName]?.let(::cleanupEmptyBinding)
+                bindings[bindingKey]?.let(::cleanupEmptyBinding)
             }
         }
     }
@@ -120,8 +127,9 @@ object EventBridge {
         JetpackEvent.resolve(name)?.eventClass
 
     private fun reconcileBinding(plugin: JetpackPlugin, binding: EventBinding) {
+        val key = bindingKey(binding.eventClassName, binding.priority, binding.ignoreCancelled)
         synchronized(binding) {
-            val activeEntries = handlers[binding.eventClassName].orEmpty().filter { it.active && !it.destroyed }
+            val activeEntries = handlers[key].orEmpty().filter { it.active && !it.destroyed }
             when {
                 activeEntries.isEmpty() && binding.registered -> {
                     HandlerList.unregisterAll(binding.listener)
@@ -131,10 +139,10 @@ object EventBridge {
                     plugin.server.pluginManager.registerEvent(
                         binding.eventClass,
                         binding.listener,
-                        EventPriority.NORMAL,
+                        binding.priority,
                         eventCallback@{ _, event ->
                             if (!binding.eventClass.isInstance(event)) return@eventCallback
-                            val callbacks = handlers[binding.eventClassName].orEmpty()
+                            val callbacks = handlers[key].orEmpty()
                                 .filter { it.active && !it.destroyed }
                             if (callbacks.isEmpty()) return@eventCallback
                             val reflected = reflectToJetValue(event)
@@ -149,6 +157,7 @@ object EventBridge {
                             callbacks.forEach { it.callback(jetValue) }
                         },
                         plugin,
+                        binding.ignoreCancelled,
                     )
                     binding.registered = true
                 }
@@ -157,8 +166,9 @@ object EventBridge {
     }
 
     private fun cleanupEmptyBinding(binding: EventBinding) {
+        val key = bindingKey(binding.eventClassName, binding.priority, binding.ignoreCancelled)
         synchronized(binding) {
-            val list = handlers[binding.eventClassName]
+            val list = handlers[key]
             if (list != null && list.isNotEmpty()) {
                 if (list.none { it.active && !it.destroyed } && binding.registered) {
                     HandlerList.unregisterAll(binding.listener)
@@ -166,12 +176,15 @@ object EventBridge {
                 }
                 return
             }
-            handlers.remove(binding.eventClassName)
+            handlers.remove(key)
             if (binding.registered) {
                 HandlerList.unregisterAll(binding.listener)
                 binding.registered = false
             }
-            bindings.remove(binding.eventClassName, binding)
+            bindings.remove(key, binding)
         }
     }
+
+    private fun bindingKey(eventClassName: String, priority: EventPriority, ignoreCancelled: Boolean): String =
+        "$eventClassName:${priority.name}:$ignoreCancelled"
 }

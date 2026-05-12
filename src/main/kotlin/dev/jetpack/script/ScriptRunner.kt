@@ -32,6 +32,7 @@ import kotlinx.coroutines.withContext
 import org.bukkit.command.Command
 import org.bukkit.command.CommandMap
 import org.bukkit.command.CommandSender
+import org.bukkit.event.EventPriority
 import org.bukkit.plugin.Plugin
 import java.io.File
 import java.util.IdentityHashMap
@@ -255,7 +256,13 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             return interval
         }
 
-        override fun registerListener(eventType: String, line: Int, body: suspend (JetValue) -> Unit): ListenerHandle {
+        override fun registerListener(
+            eventType: String,
+            line: Int,
+            priority: String?,
+            ignoreCancelled: Boolean,
+            body: suspend (JetValue) -> Unit,
+        ): ListenerHandle {
             if (JetpackEvent.resolve(eventType) == null) {
                 reportError(module.meta.scriptId, "Unknown event type '$eventType'", line, module.sourceLines)
                 return object : ListenerHandle {
@@ -266,7 +273,10 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
                     override fun isActive(): Boolean = false
                 }
             }
-            val inner = EventBridge.register(plugin, eventType, module.meta.scriptId) { senderValue ->
+            val eventPriority = priority?.let {
+                runCatching { EventPriority.valueOf(it.uppercase()) }.getOrNull()
+            } ?: EventPriority.NORMAL
+            val inner = EventBridge.register(plugin, eventType, module.meta.scriptId, eventPriority, ignoreCancelled) { senderValue ->
                 coroutineScope.launch {
                     try {
                         body(senderValue)

@@ -36,6 +36,7 @@ class Parser(private val tokens: List<Token>) {
     private var pos = 0
     private var statementDepth = 0
     private var pendingCommandAnnotations: CommandAnnotations = CommandAnnotations.EMPTY
+    private var pendingListenerAnnotations: ListenerAnnotations = ListenerAnnotations.EMPTY
 
     private fun peek(): Token = tokens[pos]
     private fun peek(offset: Int): Token =
@@ -76,6 +77,8 @@ class Parser(private val tokens: List<Token>) {
             if (isAtEnd()) { stmts.addAll(pendingMeta); break }
             if (pendingMeta.isNotEmpty() && isCommandDeclarationAhead()) {
                 pendingCommandAnnotations = buildCommandAnnotations(pendingMeta)
+            } else if (pendingMeta.isNotEmpty() && isListenerDeclarationAhead()) {
+                pendingListenerAnnotations = buildListenerAnnotations(pendingMeta)
             } else {
                 stmts.addAll(pendingMeta)
             }
@@ -89,6 +92,12 @@ class Parser(private val tokens: List<Token>) {
         var i = pos
         while (i < tokens.size && tokens[i].type in ACCESS_MODIFIERS) i++
         return i < tokens.size && tokens[i].type == TokenType.KW_COMMAND
+    }
+
+    private fun isListenerDeclarationAhead(): Boolean {
+        var i = pos
+        while (i < tokens.size && tokens[i].type in ACCESS_MODIFIERS) i++
+        return i < tokens.size && tokens[i].type == TokenType.KW_LISTENER
     }
 
     private fun buildCommandAnnotations(meta: List<Statement.Metadata>): CommandAnnotations {
@@ -107,6 +116,18 @@ class Parser(private val tokens: List<Token>) {
             }
         }
         return CommandAnnotations(description, permission, permissionMessage, usage, aliases)
+    }
+
+    private fun buildListenerAnnotations(meta: List<Statement.Metadata>): ListenerAnnotations {
+        var priority: String? = null
+        var ignoreCancelled = false
+        for (m in meta) {
+            when (m.key) {
+                "priority" -> priority = m.value
+                "ignoreCancelled" -> ignoreCancelled = m.value.trim().lowercase() == "true"
+            }
+        }
+        return ListenerAnnotations(priority, ignoreCancelled)
     }
 
     private fun parseAliasList(raw: String): List<String> {
@@ -453,6 +474,7 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseListenerDecl(access: AccessModifier, line: Int): Statement.ListenerDecl {
+        val annotations = pendingListenerAnnotations.also { pendingListenerAnnotations = ListenerAnnotations.EMPTY }
         expect(TokenType.KW_LISTENER, "Expected 'listener'")
         val eventType = expect(TokenType.IDENTIFIER, "Expected event type").value
         val name = expect(TokenType.IDENTIFIER, "Expected listener name").value
@@ -465,7 +487,7 @@ class Parser(private val tokens: List<Token>) {
         skipNewlines()
         expect(TokenType.RPAREN, "Expected ')' after sender parameter")
         val body = parseBlock()
-        return Statement.ListenerDecl(access, eventType, name, sender, body, line)
+        return Statement.ListenerDecl(access, eventType, name, sender, body, annotations, line)
     }
 
     private fun parseIfStmt(line: Int): Statement.IfStmt {

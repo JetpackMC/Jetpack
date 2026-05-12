@@ -42,6 +42,7 @@ sealed class Statement {
         val name: String,
         val senderParam: String?,
         val body: List<Statement>,
+        val annotations: ListenerAnnotations,
         override val line: Int,
     ) : Statement()
     data class IfStmt(
@@ -97,6 +98,15 @@ sealed class Statement {
         val initializer: Expression,
         override val line: Int,
     ) : Statement()
+}
+
+data class ListenerAnnotations(
+    val priority: String?,
+    val ignoreCancelled: Boolean,
+) {
+    companion object {
+        val EMPTY = ListenerAnnotations(null, false)
+    }
 }
 
 data class CommandAnnotations(
