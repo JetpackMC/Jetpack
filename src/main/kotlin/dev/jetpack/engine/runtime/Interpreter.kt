@@ -206,7 +206,13 @@ class CommandNode(
 
 interface ScriptEnvironment {
     fun registerInterval(name: String, ms: Int, body: suspend () -> Unit): IntervalHandle
-    fun registerListener(eventType: String, line: Int, body: suspend (JetValue) -> Unit): ListenerHandle
+    fun registerListener(
+        eventType: String,
+        line: Int,
+        priority: String?,
+        ignoreCancelled: Boolean,
+        body: suspend (JetValue) -> Unit,
+    ): ListenerHandle
     fun registerCommand(node: CommandNode): CommandHandle
     suspend fun <T> runThread(body: suspend () -> T): T
 }
@@ -494,8 +500,12 @@ class Interpreter(
             if (stmt.senderParam != null) child.define(stmt.senderParam, senderValue)
             try { executeBlock(stmt.body, child) } catch (_: ReturnSignal) {}
         }
-        val handle = env?.registerListener(stmt.eventType, stmt.line, body)
-            ?: DetachedListenerHandle(body)
+        val handle = env?.registerListener(
+            stmt.eventType, stmt.line,
+            stmt.annotations.priority,
+            stmt.annotations.ignoreCancelled,
+            body,
+        ) ?: DetachedListenerHandle(body)
         withScopeRuntimeError(stmt.line) {
             scope.define(stmt.name, JListener(handle))
         }

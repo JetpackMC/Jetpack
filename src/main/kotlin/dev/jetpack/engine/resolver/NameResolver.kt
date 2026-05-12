@@ -111,6 +111,12 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
                 if (!isFileScope) error("Listener can only be declared at file scope", stmt.line)
                 if (JetpackEvent.resolve(stmt.eventType) == null)
                     error("Unknown event type '${stmt.eventType}'", stmt.line)
+                val priority = stmt.annotations.priority
+                if (priority != null) {
+                    val validPriorities = setOf("LOWEST", "LOW", "NORMAL", "HIGH", "HIGHEST", "MONITOR")
+                    if (priority.uppercase() !in validPriorities)
+                        error("Unknown event priority '$priority'. Valid values: ${validPriorities.joinToString()}", stmt.line)
+                }
                 val prevFn = insideFunction
                 val prevLoop = insideLoop
                 val prevFile = isFileScope
