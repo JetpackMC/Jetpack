@@ -32,7 +32,7 @@ class HttpModule {
     private val gson = Gson()
 
     fun spec(): ModuleSpec = ModuleSpec(
-        name = "Http",
+        name = "http",
         value = asValue(),
         fields = mapOf(
             "get" to callable(
@@ -121,7 +121,7 @@ class HttpModule {
         val response = try {
             client.send(request, BodyHandlers.ofString())
         } catch (e: Exception) {
-            throw RuntimeException("Http request failed: ${e.message}")
+            throw RuntimeException("HTTP request failed: ${e.message}")
         }
         val status = response.statusCode()
         return JObject(
@@ -144,7 +144,7 @@ class HttpModule {
         is JString -> value.value
         is JList -> value.elements.map { toNativeValue(it) }
         is JObject -> toNativeMap(value)
-        else -> throw RuntimeException("Http request body contains a non-serializable value of type '${value.typeName()}'")
+        else -> throw RuntimeException("HTTP request body contains a non-serializable value of type '${value.typeName()}'")
     }
 
     private fun toNativeMap(obj: JObject): Map<String, Any?> =
