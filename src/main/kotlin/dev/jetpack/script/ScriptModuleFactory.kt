@@ -79,24 +79,14 @@ internal class ScriptModuleFactory(private val scriptsRoot: File) {
                         availableAfterDeclaration = true,
                     )
                 }
-                is Statement.ObjectDestructuring -> {
-                    for (binding in stmt.bindings) {
-                        exports[binding.localName] = ModuleExportDefinition(
-                            name = binding.localName,
-                            access = stmt.access,
-                            type = JetType.TUnknown,
-                            isReadOnly = stmt.isConst || stmt.access == AccessModifier.PROTECTED,
-                            availableAfterDeclaration = false,
-                        )
-                    }
-                }
-                is Statement.ListDestructuring -> {
-                    for (name in stmt.bindings) {
-                        if (name != null) {
+                is Statement.Deconstruction -> {
+                    if (stmt.isDeclaration) {
+                        for (binding in stmt.bindings) {
+                            val name = binding.name ?: continue
                             exports[name] = ModuleExportDefinition(
                                 name = name,
                                 access = stmt.access,
-                                type = JetType.TUnknown,
+                                type = binding.typeName?.toJetType() ?: JetType.TUnknown,
                                 isReadOnly = stmt.isConst || stmt.access == AccessModifier.PROTECTED,
                                 availableAfterDeclaration = false,
                             )

@@ -296,38 +296,27 @@ class Interpreter(
             }
             is Statement.BreakStmt -> throw BreakSignal()
             is Statement.ContinueStmt -> throw ContinueSignal()
-            is Statement.ObjectDestructuring -> {
-                val obj = evalExpr(stmt.initializer, scope)
-                if (obj !is JObject) throw RuntimeError(
-                    "Object destructuring requires an object, got '${obj.typeName()}'",
-                    stmt.line, "TypeException",
-                )
-                for (binding in stmt.bindings) {
-                    val value = obj.getField(binding.fieldName)
-                        ?: throw RuntimeError(
-                            "Object field '${binding.fieldName}' does not exist",
-                            stmt.line, "KeyException",
-                        )
-                    withScopeRuntimeError(stmt.line) {
-                        scope.defineCoerced(binding.localName, value, stmt.isConst, null)
-                    }
-                }
-            }
-            is Statement.ListDestructuring -> {
+            is Statement.Deconstruction -> {
                 val list = evalExpr(stmt.initializer, scope)
                 if (list !is JList) throw RuntimeError(
-                    "List destructuring requires a list, got '${list.typeName()}'",
+                    "Deconstruction requires a list, got '${list.typeName()}'",
                     stmt.line, "TypeException",
                 )
-                for ((index, name) in stmt.bindings.withIndex()) {
-                    if (name == null) continue
+                for ((index, binding) in stmt.bindings.withIndex()) {
+                    val name = binding.name ?: continue
                     val value = list.elements.getOrNull(index)
                         ?: throw RuntimeError(
-                            "List destructuring index $index is out of range (list has ${list.elements.size} elements)",
+                            "Deconstruction index $index is out of range (list has ${list.elements.size} elements)",
                             stmt.line, "IndexException",
                         )
+                    val declaredType = binding.typeName?.toJetTypeOrNull()
+                    val coerced = coerceValueToType(value, declaredType)
                     withScopeRuntimeError(stmt.line) {
-                        scope.defineCoerced(name, value, stmt.isConst, null)
+                        if (stmt.isDeclaration) {
+                            scope.defineCoerced(name, coerced, stmt.isConst, declaredType)
+                        } else {
+                            scope.set(name, coerced)
+                        }
                     }
                 }
             }

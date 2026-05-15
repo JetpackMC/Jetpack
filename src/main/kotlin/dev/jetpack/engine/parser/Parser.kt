@@ -258,8 +258,15 @@ class Parser(private val tokens: List<Token>) {
             TokenType.KW_COMMAND -> parseCommandDecl(access ?: AccessModifier.PRIVATE, line, isRoot = true)
             TokenType.KW_CONST -> {
                 advance()
-                if (peekType() == TokenType.LBRACE || peekType() == TokenType.LBRACKET) {
-                    parseDestructuring(access ?: AccessModifier.PRIVATE, isConst = true, line)
+                if (peekType() == TokenType.LPAREN) {
+                    parseDeconstruction(
+                        access = access ?: AccessModifier.PRIVATE,
+                        isConst = true,
+                        isDeclaration = true,
+                        allowTypes = true,
+                        requireTypes = false,
+                        line = line,
+                    )
                 } else if (!isTypeKeyword(peekType())) {
                     throw ParseException("Const can only be used with variable declarations", line)
                 } else {
@@ -267,8 +274,29 @@ class Parser(private val tokens: List<Token>) {
                 }
             }
             else -> {
-                if ((peekType() == TokenType.LBRACE || peekType() == TokenType.LBRACKET) && isDestructuringAhead()) {
-                    parseDestructuring(access ?: AccessModifier.PRIVATE, isConst = false, line)
+                if (peekType() == TokenType.KW_VAR && peekType(1) == TokenType.LPAREN) {
+                    advance()
+                    parseDeconstruction(
+                        access = access ?: AccessModifier.PRIVATE,
+                        isConst = false,
+                        isDeclaration = true,
+                        allowTypes = false,
+                        requireTypes = false,
+                        line = line,
+                    )
+                } else if (peekType() == TokenType.LPAREN && isDeconstructionAhead()) {
+                    val isDeclaration = isTypedDeconstructionPattern()
+                    if (access != null && !isDeclaration) {
+                        throw ParseException("Access modifier can only be used with declarations", line)
+                    }
+                    parseDeconstruction(
+                        access = access ?: AccessModifier.PRIVATE,
+                        isConst = false,
+                        isDeclaration = isDeclaration,
+                        allowTypes = isDeclaration,
+                        requireTypes = isDeclaration,
+                        line = line,
+                    )
                 } else if (access != null && !isTypeKeyword(peekType())) {
                     throw ParseException("Access modifier can only be used with top-level declarations", line)
                 } else if (isTypeKeyword(peekType())) {
@@ -1090,16 +1118,14 @@ class Parser(private val tokens: List<Token>) {
         return Expression.ObjectLiteral(entries, line)
     }
 
-    private fun isDestructuringAhead(): Boolean {
-        val openType = peekType()
-        if (openType != TokenType.LBRACE && openType != TokenType.LBRACKET) return false
-        val closeType = if (openType == TokenType.LBRACE) TokenType.RBRACE else TokenType.RBRACKET
+    private fun isDeconstructionAhead(): Boolean {
+        if (peekType() != TokenType.LPAREN) return false
         var i = pos + 1
         var depth = 0
         while (i < tokens.size) {
             when (tokens[i].type) {
-                openType -> depth++
-                closeType -> {
+                TokenType.LPAREN -> depth++
+                TokenType.RPAREN -> {
                     if (depth == 0) {
                         i++
                         while (i < tokens.size && (tokens[i].type == TokenType.NEWLINE || tokens[i].type == TokenType.SEMICOLON)) i++
@@ -1115,50 +1141,59 @@ class Parser(private val tokens: List<Token>) {
         return false
     }
 
-    private fun parseDestructuring(access: AccessModifier, isConst: Boolean, line: Int): Statement =
-        when (peekType()) {
-            TokenType.LBRACE -> parseObjectDestructuring(access, isConst, line)
-            TokenType.LBRACKET -> parseListDestructuring(access, isConst, line)
-            else -> throw ParseException("Expected '{' or '[' for destructuring", line)
-        }
-
-    private fun parseObjectDestructuring(access: AccessModifier, isConst: Boolean, line: Int): Statement.ObjectDestructuring {
-        expect(TokenType.LBRACE, "Expected '{'")
-        skipNewlines()
-        val bindings = mutableListOf<DestructuringBinding>()
-        while (!check(TokenType.RBRACE) && !isAtEnd()) {
-            val fieldName = expect(TokenType.IDENTIFIER, "Expected field name in object destructuring").value
-            val localName = if (check(TokenType.COLON)) {
-                advance()
-                expect(TokenType.IDENTIFIER, "Expected local variable name after ':' in object destructuring").value
-            } else {
-                fieldName
-            }
-            bindings.add(DestructuringBinding(fieldName, localName))
-            skipNewlines()
-            if (check(TokenType.COMMA)) { advance(); skipNewlines() }
-        }
-        expect(TokenType.RBRACE, "Expected '}' to close object destructuring")
-        expect(TokenType.EQ, "Expected '=' after object destructuring pattern")
-        val initializer = parseExpression()
-        return Statement.ObjectDestructuring(access, isConst, bindings, initializer, line)
+    private fun isTypedDeconstructionPattern(): Boolean {
+        if (peekType() != TokenType.LPAREN) return false
+        var i = pos + 1
+        while (i < tokens.size && tokens[i].type in setOf(TokenType.NEWLINE, TokenType.SEMICOLON)) i++
+        return i < tokens.size && isTypeKeyword(tokens[i].type)
     }
 
-    private fun parseListDestructuring(access: AccessModifier, isConst: Boolean, line: Int): Statement.ListDestructuring {
-        expect(TokenType.LBRACKET, "Expected '['")
+    private fun parseDeconstruction(
+        access: AccessModifier,
+        isConst: Boolean,
+        isDeclaration: Boolean,
+        allowTypes: Boolean,
+        requireTypes: Boolean,
+        line: Int,
+    ): Statement.Deconstruction {
+        expect(TokenType.LPAREN, "Expected '('")
         skipNewlines()
-        val bindings = mutableListOf<String?>()
-        while (!check(TokenType.RBRACKET) && !isAtEnd()) {
-            bindings.add(
-                if (check(TokenType.IDENTIFIER) && peek().value == "_") { advance(); null }
-                else expect(TokenType.IDENTIFIER, "Expected variable name or '_' in list destructuring").value
-            )
+        val bindings = mutableListOf<DeconstructionBinding>()
+        while (!check(TokenType.RPAREN) && !isAtEnd()) {
+            bindings += parseDeconstructionBinding(isDeclaration, allowTypes, requireTypes)
             skipNewlines()
-            if (check(TokenType.COMMA)) { advance(); skipNewlines() }
+            if (check(TokenType.COMMA)) {
+                advance()
+                skipNewlines()
+            } else {
+                break
+            }
         }
-        expect(TokenType.RBRACKET, "Expected ']' to close list destructuring")
-        expect(TokenType.EQ, "Expected '=' after list destructuring pattern")
+        expect(TokenType.RPAREN, "Expected ')' to close deconstruction pattern")
+        expect(TokenType.EQ, "Expected '=' after deconstruction pattern")
         val initializer = parseExpression()
-        return Statement.ListDestructuring(access, isConst, bindings, initializer, line)
+        return Statement.Deconstruction(access, isConst, isDeclaration, bindings, initializer, line)
+    }
+
+    private fun parseDeconstructionBinding(
+        isDeclaration: Boolean,
+        allowTypes: Boolean,
+        requireTypes: Boolean,
+    ): DeconstructionBinding {
+        if (check(TokenType.IDENTIFIER) && peek().value == "_") {
+            advance()
+            return DeconstructionBinding(null, null)
+        }
+        if (!allowTypes && isTypeKeyword(peekType())) {
+            throw ParseException("Deconstruction declared with 'var' cannot specify item types", peek().line)
+        }
+        if (requireTypes && !isTypeKeyword(peekType())) {
+            throw ParseException("Expected typed deconstruction item", peek().line)
+        }
+        val typeRef = if (isDeclaration && allowTypes && isTypeKeyword(peekType())) {
+            parseTypeRef()
+        } else null
+        val name = expect(TokenType.IDENTIFIER, "Expected variable name or '_' in deconstruction pattern").value
+        return DeconstructionBinding(name, typeRef)
     }
 }
