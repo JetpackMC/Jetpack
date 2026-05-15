@@ -84,17 +84,11 @@ sealed class Statement {
         val annotations: CommandAnnotations,
         override val line: Int,
     ) : Statement()
-    data class ObjectDestructuring(
+    data class Deconstruction(
         val access: AccessModifier,
         val isConst: Boolean,
-        val bindings: List<DestructuringBinding>,
-        val initializer: Expression,
-        override val line: Int,
-    ) : Statement()
-    data class ListDestructuring(
-        val access: AccessModifier,
-        val isConst: Boolean,
-        val bindings: List<String?>,
+        val isDeclaration: Boolean,
+        val bindings: List<DeconstructionBinding>,
         val initializer: Expression,
         override val line: Int,
     ) : Statement()
@@ -146,9 +140,9 @@ data class TypeRef(
     val typeArgRef: TypeRef? = null,
 )
 
-data class DestructuringBinding(
-    val fieldName: String,
-    val localName: String,
+data class DeconstructionBinding(
+    val name: String?,
+    val typeName: TypeRef?,
 )
 
 enum class AccessModifier { PUBLIC, PRIVATE, PROTECTED }

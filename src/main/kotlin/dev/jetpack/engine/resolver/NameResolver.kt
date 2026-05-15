@@ -209,14 +209,16 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
                 isFileScope = prevFile
             }
 
-            is Statement.ObjectDestructuring -> {
+            is Statement.Deconstruction -> {
                 resolveExpr(stmt.initializer)
-                for (binding in stmt.bindings) declare(binding.localName, stmt.line)
-            }
-
-            is Statement.ListDestructuring -> {
-                resolveExpr(stmt.initializer)
-                for (name in stmt.bindings) if (name != null) declare(name, stmt.line)
+                for (binding in stmt.bindings) {
+                    val name = binding.name ?: continue
+                    if (stmt.isDeclaration) {
+                        declare(name, stmt.line)
+                    } else if (!isDeclared(name)) {
+                        error("Undefined identifier '$name'", stmt.line)
+                    }
+                }
             }
         }
     }
@@ -346,6 +348,9 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
         }
         current[name] = line
     }
+
+    private fun isDeclared(name: String): Boolean =
+        scopes.any { name in it }
 
     private fun error(message: String, line: Int) {
         errors.add(ResolverError(message, line))

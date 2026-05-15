@@ -203,8 +203,11 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
                             interpreter.executeStmt(stmt, scope)
                             when (stmt) {
                                 is Statement.VarDecl -> module.initializedExports += stmt.name
-                                is Statement.ObjectDestructuring -> module.initializedExports += stmt.bindings.map { it.localName }
-                                is Statement.ListDestructuring -> module.initializedExports += stmt.bindings.filterNotNull()
+                                is Statement.Deconstruction -> {
+                                    if (stmt.isDeclaration) {
+                                        module.initializedExports += stmt.bindings.mapNotNull { it.name }
+                                    }
+                                }
                                 else -> Unit
                             }
                         }

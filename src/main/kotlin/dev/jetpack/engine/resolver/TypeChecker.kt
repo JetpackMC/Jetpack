@@ -238,24 +238,52 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
 
             is Statement.BreakStmt, is Statement.ContinueStmt -> Unit
 
-            is Statement.ObjectDestructuring -> {
-                val initType = inferExpr(stmt.initializer)
-                if (initType != JetType.TObject && initType != JetType.TUnknown) {
-                    errors.add(TypeCheckerError("Object destructuring requires an object, got '$initType'", stmt.line))
+            is Statement.Deconstruction -> {
+                val positionalTypes = (stmt.initializer as? Expression.ListLiteral)?.elements?.map(::inferExpr)
+                val initType = if (positionalTypes != null) {
+                    JetType.TList(if (positionalTypes.isEmpty()) JetType.TUnknown else commonSupertype(positionalTypes))
+                } else {
+                    inferExpr(stmt.initializer)
                 }
-                for (binding in stmt.bindings) {
-                    defineType(binding.localName, JetType.TUnknown, stmt.line, stmt.isConst)
-                }
-            }
-
-            is Statement.ListDestructuring -> {
-                val initType = inferExpr(stmt.initializer)
                 if (initType !is JetType.TList && initType != JetType.TUnknown) {
-                    errors.add(TypeCheckerError("List destructuring requires a list, got '$initType'", stmt.line))
+                    errors.add(TypeCheckerError("Deconstruction requires a list, got '$initType'", stmt.line))
                 }
                 val elementType = if (initType is JetType.TList) initType.elementType else JetType.TUnknown
-                for (name in stmt.bindings) {
-                    if (name != null) defineType(name, elementType, stmt.line, stmt.isConst)
+                for ((index, binding) in stmt.bindings.withIndex()) {
+                    val name = binding.name ?: continue
+                    val bindingElementType = positionalTypes?.getOrNull(index) ?: elementType
+                    if (positionalTypes != null && index >= positionalTypes.size) {
+                        errors.add(TypeCheckerError("Deconstruction index $index is out of range", stmt.line))
+                    }
+                    val declaredType = binding.typeName?.let {
+                        resolveTypeRef(it, stmt.line, "Deconstruction variable '$name'")
+                    }
+                    if (declaredType != null &&
+                        declaredType != JetType.TUnknown &&
+                        bindingElementType != JetType.TUnknown &&
+                        !declaredType.accepts(bindingElementType)
+                    ) {
+                        errors.add(TypeCheckerError(
+                            "Deconstruction variable '$name' has type '$declaredType' but list yields '$bindingElementType'",
+                            stmt.line,
+                        ))
+                    }
+                    if (stmt.isDeclaration) {
+                        defineType(name, declaredType ?: bindingElementType, stmt.line, stmt.isConst)
+                    } else {
+                        val targetType = lookupType(name) ?: JetType.TUnknown
+                        when {
+                            isConst(name) -> errors.add(TypeCheckerError("Cannot reassign const variable '$name'", stmt.line))
+                            isReadOnly(name) -> errors.add(TypeCheckerError("Cannot reassign foreach item '$name'", stmt.line))
+                            targetType != JetType.TUnknown &&
+                                bindingElementType != JetType.TUnknown &&
+                                !targetType.accepts(bindingElementType) ->
+                                errors.add(TypeCheckerError(
+                                    "Cannot assign list element of type '$bindingElementType' to variable '$name' of type '$targetType'",
+                                    stmt.line,
+                                ))
+                        }
+                    }
                 }
             }
 
@@ -1132,8 +1160,7 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         is Statement.IntervalDecl,
         is Statement.ListenerDecl,
         is Statement.CommandDecl,
-        is Statement.ObjectDestructuring,
-        is Statement.ListDestructuring -> setOf(FlowSignal.FALLTHROUGH)
+        is Statement.Deconstruction -> setOf(FlowSignal.FALLTHROUGH)
     }
 
     private fun analyzeTryFlow(stmt: Statement.TryStmt): Set<FlowSignal> {
