@@ -50,8 +50,56 @@ jobs:
       - name: Build
         run: gradle build
 
+      - name: Prepare release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=Jetpack $version" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: build/libs/Jetpack.jar
           generate_release_notes: true
+
+      - name: Read generated release notes
+        id: release_notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "changelog<<EOF"
+            gh release view "$GITHUB_REF_NAME" --json body --jq .body
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate Modrinth configuration
+        shell: bash
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_ID: ${{ vars.MODRINTH_ID }}
+        run: |
+          if [[ -z "$MODRINTH_TOKEN" ]]; then
+            echo "Missing required secret: MODRINTH_TOKEN"
+            exit 1
+          fi
+          if [[ -z "$MODRINTH_ID" ]]; then
+            echo "Missing required repository variable: MODRINTH_ID"
+            exit 1
+          fi
+
+      - name: Publish to Modrinth
+        uses: cloudnode-pro/modrinth-publish@v2
+        with:
+          token: ${{ secrets.MODRINTH_TOKEN }}
+          project: ${{ vars.MODRINTH_ID }}
+          name: ${{ steps.release_meta.outputs.name }}
+          version: ${{ steps.release_meta.outputs.version }}
+          changelog: ${{ steps.release_notes.outputs.changelog }}
+          loaders: paper
+          game-versions: "1.21.10"
+          files: build/libs/Jetpack.jar
