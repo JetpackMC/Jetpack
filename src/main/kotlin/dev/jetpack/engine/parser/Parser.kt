@@ -106,6 +106,7 @@ class Parser(private val tokens: List<Token>) {
         var permissionMessage: String? = null
         var usage: String? = null
         var aliases = emptyList<String>()
+        val placeholders = linkedMapOf<String, CommandPlaceholder>()
         for (m in meta) {
             when (m.key) {
                 "description" -> description = m.value
@@ -113,9 +114,16 @@ class Parser(private val tokens: List<Token>) {
                 "permission_message" -> permissionMessage = m.value
                 "usage" -> usage = m.value
                 "aliases" -> aliases = parseAliasList(m.value)
+                "placeholder" -> {
+                    val target = m.target
+                        ?: throw ParseException("Metadata '@placeholder' expects a parameter name and a string literal value", m.line)
+                    if (placeholders.put(target, CommandPlaceholder(m.value, m.line)) != null) {
+                        throw ParseException("Placeholder for command parameter '$target' is already declared", m.line)
+                    }
+                }
             }
         }
-        return CommandAnnotations(description, permission, permissionMessage, usage, aliases)
+        return CommandAnnotations(description, permission, permissionMessage, usage, aliases, placeholders)
     }
 
     private fun buildListenerAnnotations(meta: List<Statement.Metadata>): ListenerAnnotations {
@@ -150,14 +158,22 @@ class Parser(private val tokens: List<Token>) {
         val line = peek().line
         expect(TokenType.AT, "Expected '@'")
         val key = expect(TokenType.IDENTIFIER, "Expected metadata key after '@'").value
+        val target = if (key == "placeholder") {
+            expect(TokenType.IDENTIFIER, "Metadata '@placeholder' expects a parameter name").value
+        } else {
+            null
+        }
         val value = expect(
             TokenType.STRING_LITERAL,
-            "Metadata '@$key' expects a string literal value",
+            if (key == "placeholder") "Metadata '@placeholder' expects a string literal placeholder"
+            else "Metadata '@$key' expects a string literal value",
         ).value
         if (!isAtEnd() && !check(TokenType.NEWLINE) && !check(TokenType.SEMICOLON)) {
-            throw ParseException("Metadata '@$key' must contain exactly one string literal value", peek().line)
+            val expected = if (key == "placeholder") "a parameter name and one string literal value"
+                else "exactly one string literal value"
+            throw ParseException("Metadata '@$key' must contain $expected", peek().line)
         }
-        return Statement.Metadata(key, value, line)
+        return Statement.Metadata(key, value, line, target)
     }
 
     private fun parseUsing(): Statement.Using {
@@ -408,9 +424,15 @@ class Parser(private val tokens: List<Token>) {
         }
     }
 
-    private fun parseCommandDecl(access: AccessModifier, line: Int, isRoot: Boolean): Statement.CommandDecl {
-        val annotations = if (isRoot) pendingCommandAnnotations.also { pendingCommandAnnotations = CommandAnnotations.EMPTY }
-                          else CommandAnnotations.EMPTY
+    private fun parseCommandDecl(
+        access: AccessModifier,
+        line: Int,
+        isRoot: Boolean,
+        providedAnnotations: CommandAnnotations? = null,
+    ): Statement.CommandDecl {
+        val annotations = providedAnnotations
+            ?: if (isRoot) pendingCommandAnnotations.also { pendingCommandAnnotations = CommandAnnotations.EMPTY }
+            else CommandAnnotations.EMPTY
         expect(TokenType.KW_COMMAND, "Expected 'command'")
         val name = expect(TokenType.IDENTIFIER, "Expected command name").value
         expect(TokenType.LPAREN, "Expected '(' after command name")
@@ -450,6 +472,28 @@ class Parser(private val tokens: List<Token>) {
             skipNewlines()
             while (!check(TokenType.RBRACE) && !isAtEnd()) {
                 when {
+                    check(TokenType.AT) -> {
+                        val pendingMeta = mutableListOf<Statement.Metadata>()
+                        while (check(TokenType.AT)) {
+                            pendingMeta.add(parseMetadata())
+                            skipNewlines()
+                        }
+                        if (!check(TokenType.KW_COMMAND)) {
+                            items.addAll(pendingMeta.map { CommandBodyItem.Code(it) })
+                        } else {
+                            val sub = parseCommandDecl(
+                                AccessModifier.PRIVATE,
+                                peek().line,
+                                isRoot = false,
+                                providedAnnotations = buildCommandAnnotations(pendingMeta),
+                            )
+                            val prev = subCommandLines.putIfAbsent(sub.name, sub.line)
+                            if (prev != null) {
+                                throw ParseException("Sub command '${sub.name}' is already declared in this command body", sub.line)
+                            }
+                            items.add(CommandBodyItem.SubCommand(sub))
+                        }
+                    }
                     check(TokenType.KW_COMMAND) -> {
                         val sub = parseCommandDecl(AccessModifier.PRIVATE, peek().line, isRoot = false)
                         val prev = subCommandLines.putIfAbsent(sub.name, sub.line)
@@ -483,7 +527,20 @@ class Parser(private val tokens: List<Token>) {
             bodyItems
         }
 
+        validateCommandPlaceholders(params, annotations)
         return Statement.CommandDecl(access, name, senderName, params, finalItems, annotations, line)
+    }
+
+    private fun validateCommandPlaceholders(params: List<Param>, annotations: CommandAnnotations) {
+        val paramNames = params.mapTo(linkedSetOf()) { it.name }
+        for ((name, placeholder) in annotations.placeholders) {
+            if (name !in paramNames) {
+                throw ParseException("Placeholder references unknown command parameter '$name'", placeholder.line)
+            }
+            if (placeholder.value.isBlank()) {
+                throw ParseException("Placeholder for command parameter '$name' cannot be blank", placeholder.line)
+            }
+        }
     }
 
     private fun parseIntervalDecl(access: AccessModifier, line: Int): Statement.IntervalDecl {
