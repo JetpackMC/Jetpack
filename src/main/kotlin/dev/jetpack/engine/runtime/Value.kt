@@ -14,31 +14,45 @@ sealed class JetValue {
         val returnType: JetType? = null,
         val requiredCount: Int = params.count { it.default == null },
         val resolvedParamTypes: List<JetType> = params.map { it.typeName?.toJetTypeOrNull() ?: JetType.TUnknown },
-    ) : JetValue()
+    ) : JetValue() {
+        override fun toString() = renderString()
+    }
 
-    data class JBuiltin(val fn: suspend (List<JetValue>) -> JetValue) : JetValue()
-    data class JInterval(val handle: IntervalHandle) : JetValue()
-    data class JListener(val handle: ListenerHandle) : JetValue()
+    data class JBuiltin(val fn: suspend (List<JetValue>) -> JetValue) : JetValue() {
+        override fun toString() = renderString()
+    }
+    data class JInterval(val handle: IntervalHandle) : JetValue() {
+        override fun toString() = renderString()
+    }
+    data class JListener(val handle: ListenerHandle) : JetValue() {
+        override fun toString() = renderString()
+    }
     data class JCommand(
         val handle: CommandHandle,
         val path: List<String> = emptyList(),
         val subcommands: Map<String, JCommand> = emptyMap(),
-    ) : JetValue()
-    data class JInt(val value: Int) : JetValue() {
-        override fun toString() = value.toString()
+    ) : JetValue() {
+        override fun toString() = renderString()
     }
-    data class JFloat(val value: Double) : JetValue()
+    data class JInt(val value: Int) : JetValue() {
+        override fun toString() = renderString()
+    }
+    data class JFloat(val value: Double) : JetValue() {
+        override fun toString() = renderString()
+    }
     data class JString(val value: String) : JetValue() {
-        override fun toString() = value
+        override fun toString() = renderString()
     }
     data class JBool(val value: Boolean) : JetValue() {
-        override fun toString() = value.toString()
+        override fun toString() = renderString()
     }
     data class JList(
         val elements: MutableList<JetValue>,
         val isReadOnly: Boolean = false,
         var declaredElementType: JetType? = null,
-    ) : JetValue()
+    ) : JetValue() {
+        override fun toString() = renderString()
+    }
     class JObject(
         val fields: MutableMap<String, JetValue>,
         val isReadOnly: Boolean = false,
@@ -139,7 +153,7 @@ sealed class JetValue {
         }
     }
     object JNull : JetValue() {
-        override fun toString() = "null"
+        override fun toString() = renderString()
     }
 
     fun typeName(): String = when (this) {
@@ -175,7 +189,9 @@ sealed class JetValue {
 
     fun isNumeric(): Boolean = this is JInt || this is JFloat
 
-    open override fun toString(): String = renderValue(this, 0, IdentityHashMap())
+    fun renderString(): String = renderValue(this, 0, IdentityHashMap())
+
+    open override fun toString(): String = renderString()
 
     private fun renderValue(
         value: JetValue,
