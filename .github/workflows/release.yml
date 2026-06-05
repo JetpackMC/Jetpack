@@ -81,14 +81,14 @@ jobs:
         shell: bash
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-          MODRINTH_ID: ${{ vars.MODRINTH_ID }}
+          MODRINTH_PROJECT: ${{ vars.MODRINTH_PROJECT || vars.MODRINTH_ID }}
         run: |
           if [[ -z "$MODRINTH_TOKEN" ]]; then
             echo "Missing required secret: MODRINTH_TOKEN"
             exit 1
           fi
-          if [[ -z "$MODRINTH_ID" ]]; then
-            echo "Missing required repository variable: MODRINTH_ID"
+          if [[ -z "$MODRINTH_PROJECT" ]]; then
+            echo "Missing required repository variable: MODRINTH_PROJECT"
             exit 1
           fi
 
@@ -96,7 +96,7 @@ jobs:
         uses: cloudnode-pro/modrinth-publish@v2
         with:
           token: ${{ secrets.MODRINTH_TOKEN }}
-          project: ${{ vars.MODRINTH_ID }}
+          project: ${{ vars.MODRINTH_PROJECT || vars.MODRINTH_ID }}
           name: ${{ steps.release_meta.outputs.name }}
           version: ${{ steps.release_meta.outputs.version }}
           changelog: ${{ steps.release_notes.outputs.changelog }}
