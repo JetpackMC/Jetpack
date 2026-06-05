@@ -3,12 +3,7 @@ package dev.jetpack.engine.parser.ast
 sealed class Statement {
     abstract val line: Int
 
-    data class Metadata(
-        val key: String,
-        val value: String,
-        override val line: Int,
-        val target: String? = null,
-    ) : Statement()
+    data class Metadata(val key: String, val value: String, override val line: Int) : Statement()
     data class Using(
         val relativeDots: Int,
         val path: List<String>,
@@ -114,14 +109,11 @@ data class CommandAnnotations(
     val permissionMessage: String?,
     val usage: String?,
     val aliases: List<String>,
-    val placeholders: Map<String, CommandPlaceholder>,
 ) {
     companion object {
-        val EMPTY = CommandAnnotations(null, null, null, null, emptyList(), emptyMap())
+        val EMPTY = CommandAnnotations(null, null, null, null, emptyList())
     }
 }
-
-data class CommandPlaceholder(val value: String, val line: Int)
 
 sealed class ManifestValue {
     data class Scalar(val value: String) : ManifestValue()
