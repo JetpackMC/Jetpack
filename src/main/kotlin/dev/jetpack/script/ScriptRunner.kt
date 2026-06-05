@@ -1,5 +1,19 @@
+@file:Suppress("DEPRECATION")
+
 package dev.jetpack.script
 
+import com.destroystokyo.paper.brigadier.BukkitBrigadierCommand
+import com.destroystokyo.paper.brigadier.BukkitBrigadierCommandSource
+import com.destroystokyo.paper.event.brigadier.CommandRegisteredEvent
+import com.mojang.brigadier.arguments.ArgumentType
+import com.mojang.brigadier.arguments.BoolArgumentType
+import com.mojang.brigadier.arguments.DoubleArgumentType
+import com.mojang.brigadier.arguments.IntegerArgumentType
+import com.mojang.brigadier.arguments.StringArgumentType
+import com.mojang.brigadier.builder.ArgumentBuilder
+import com.mojang.brigadier.builder.LiteralArgumentBuilder
+import com.mojang.brigadier.builder.RequiredArgumentBuilder
+import com.mojang.brigadier.tree.LiteralCommandNode
 import dev.jetpack.JetpackPlugin
 import dev.jetpack.engine.runtime.builtins.RegistrationHandle
 import dev.jetpack.event.JetpackEvent
@@ -32,7 +46,9 @@ import kotlinx.coroutines.withContext
 import org.bukkit.command.Command
 import org.bukkit.command.CommandMap
 import org.bukkit.command.CommandSender
+import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
+import org.bukkit.event.Listener
 import org.bukkit.plugin.Plugin
 import java.io.File
 import java.util.IdentityHashMap
@@ -63,6 +79,16 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     private var commandRefreshPending = false
     private val modulesByCanonicalPath = linkedMapOf<String, ScriptModule>()
     private val modulesByLogicalPath = linkedMapOf<String, ScriptModule>()
+    private val commandNodes = IdentityHashMap<Command, CommandNode>()
+
+    init {
+        plugin.server.pluginManager.registerEvents(object : Listener {
+            @EventHandler
+            fun onCommandRegistered(event: CommandRegisteredEvent<*>) {
+                replaceScriptCommandTree(event)
+            }
+        }, plugin)
+    }
 
     fun registerModule(owner: Plugin, builtin: Builtin): RegistrationHandle =
         extensionRegistry.registerModule(owner, builtin)
@@ -330,6 +356,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             node.annotations.permission?.let { cmd.permission = it }
             node.annotations.permissionMessage?.let { cmd.permissionMessage = it }
             if (node.annotations.aliases.isNotEmpty()) cmd.aliases = node.annotations.aliases
+            commandNodes[cmd] = node
             plugin.server.commandMap.register(plugin.name.lowercase(), cmd)
             scriptCommands.getOrPut(canonicalPath) { mutableListOf() }.add(cmd)
             requestCommandTreeRefresh()
@@ -343,6 +370,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
                 override fun activate(): Boolean = synchronized(lock) {
                     if (destroyed || active) return@synchronized false
+                    commandNodes[cmd] = node
                     plugin.server.commandMap.register(plugin.name.lowercase(), cmd)
                     active = true
                     requestCommandTreeRefresh()
@@ -429,6 +457,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         val targets = IdentityHashMap<Command, Boolean>(commands.size)
         for (command in commands) {
             command.unregister(commandMap)
+            commandNodes.remove(command)
             targets[command] = true
         }
 
@@ -546,7 +575,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         val paramCount = node.params.size
 
         if (args.size <= paramCount) {
-            return listOf("<${node.params[args.size - 1].typeName ?: "any"}>")
+            return emptyList()
         }
 
         val remainingArgs = args.drop(paramCount)
@@ -557,6 +586,72 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
         val sub = subItems.find { it.node.name.equals(remainingArgs[0], ignoreCase = true) }
         return if (sub != null) buildTabCompletions(sub.node, remainingArgs.drop(1)) else emptyList()
+    }
+
+    @Suppress("UNCHECKED_CAST", "DEPRECATION")
+    private fun replaceScriptCommandTree(event: CommandRegisteredEvent<*>) {
+        val node = commandNodes[event.command] ?: return
+        replaceScriptCommandTree(event as CommandRegisteredEvent<BukkitBrigadierCommandSource>, node)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun <S : BukkitBrigadierCommandSource> replaceScriptCommandTree(
+        event: CommandRegisteredEvent<S>,
+        node: CommandNode,
+    ) {
+        event.setLiteral(buildBrigadierLiteral(event.commandLabel, node, event.brigadierCommand))
+        event.setRawCommand(true)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun <S : BukkitBrigadierCommandSource> buildBrigadierLiteral(
+        label: String,
+        node: CommandNode,
+        command: BukkitBrigadierCommand<S>,
+    ): LiteralCommandNode<S> {
+        val literal = LiteralArgumentBuilder.literal<S>(label)
+            .requires(command)
+        appendCommandShape(literal, node, command)
+        return literal.build()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <S : BukkitBrigadierCommandSource> appendCommandShape(
+        builder: ArgumentBuilder<S, *>,
+        node: CommandNode,
+        command: BukkitBrigadierCommand<S>,
+    ) {
+        val requiredCount = node.params.count { it.default == null }
+        var current = builder
+        if (requiredCount == 0) {
+            current.executes(command)
+        }
+
+        for ((index, param) in node.params.withIndex()) {
+            val argument = RequiredArgumentBuilder.argument<S, Any>(
+                param.placeholder,
+                commandArgumentType(param) as ArgumentType<Any>,
+            )
+            if (index + 1 >= requiredCount) {
+                argument.executes(command)
+            }
+            current.then(argument)
+            current = argument
+        }
+
+        for (item in node.bodyItems) {
+            if (item !is CommandItem.Sub) continue
+            val literal = LiteralArgumentBuilder.literal<S>(item.node.name)
+            appendCommandShape(literal, item.node, command)
+            current.then(literal)
+        }
+    }
+
+    private fun commandArgumentType(param: CommandParam): ArgumentType<*> = when (param.typeName) {
+        "int" -> IntegerArgumentType.integer()
+        "float" -> DoubleArgumentType.doubleArg()
+        "bool" -> BoolArgumentType.bool()
+        else -> StringArgumentType.word()
     }
 
     private fun buildSenderObject(sender: CommandSender, label: String, args: Array<String>): JetValue.JObject {
