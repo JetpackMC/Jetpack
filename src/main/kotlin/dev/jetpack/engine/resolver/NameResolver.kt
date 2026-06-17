@@ -107,6 +107,35 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
                 isFileScope = prevFile
             }
 
+            is Statement.ScheduleDecl -> {
+                if (!isFileScope) error("Schedule can only be declared at file scope", stmt.line)
+                val prevFn = insideFunction
+                val prevLoop = insideLoop
+                val prevFile = isFileScope
+                insideFunction = true
+                insideLoop = false
+                isFileScope = false
+                pushScope()
+                for (bodyStmt in stmt.body) resolveStmt(bodyStmt)
+                popScope()
+                insideFunction = prevFn
+                insideLoop = prevLoop
+                isFileScope = prevFile
+            }
+
+            is Statement.EnumDecl -> {
+                if (!isFileScope) error("Enum can only be declared at file scope", stmt.line)
+                val seenEntries = mutableMapOf<String, Int>()
+                for (entry in stmt.entries) {
+                    val prev = seenEntries[entry.name]
+                    if (prev != null) {
+                        errors.add(ResolverError("Enum entry '${entry.name}' is already declared", entry.line, prev))
+                    } else {
+                        seenEntries[entry.name] = entry.line
+                    }
+                }
+            }
+
             is Statement.ListenerDecl -> {
                 if (!isFileScope) error("Listener can only be declared at file scope", stmt.line)
                 if (JetpackEvent.resolve(stmt.eventType) == null)
@@ -328,8 +357,10 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
             when (stmt) {
                 is Statement.FunctionDecl -> declare(stmt.name, stmt.line)
                 is Statement.IntervalDecl -> declare(stmt.name, stmt.line)
+                is Statement.ScheduleDecl -> declare(stmt.name, stmt.line)
                 is Statement.ListenerDecl -> declare(stmt.name, stmt.line)
                 is Statement.CommandDecl -> declare(stmt.name, stmt.line)
+                is Statement.EnumDecl -> declare(stmt.name, stmt.line)
                 else -> Unit
             }
         }

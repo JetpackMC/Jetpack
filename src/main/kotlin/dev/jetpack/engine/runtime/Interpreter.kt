@@ -3,6 +3,7 @@ package dev.jetpack.engine.runtime
 import dev.jetpack.engine.lexer.TokenType
 import dev.jetpack.engine.parser.ast.CommandAnnotations
 import dev.jetpack.engine.parser.ast.CommandBodyItem as AstCommandBodyItem
+import dev.jetpack.engine.parser.ast.EnumValue
 import dev.jetpack.engine.parser.ast.Expression
 import dev.jetpack.engine.parser.ast.JetType
 import dev.jetpack.engine.parser.ast.Statement
@@ -98,6 +99,45 @@ private class DetachedIntervalHandle(
     }
 
     override fun isActive(): Boolean = !destroyed && active
+}
+
+private class DetachedScheduleHandle(
+    private val cronText: String,
+    private val body: suspend () -> Unit,
+) : ScheduleHandle {
+    private var destroyed = false
+    private var active = true
+
+    override fun destroy(): Boolean {
+        if (destroyed) return false
+        destroyed = true
+        active = false
+        return true
+    }
+
+    override fun activate(): Boolean {
+        if (destroyed || active) return false
+        active = true
+        return true
+    }
+
+    override fun deactivate(): Boolean {
+        if (destroyed || !active) return false
+        active = false
+        return true
+    }
+
+    override fun trigger(): Boolean {
+        if (destroyed) return false
+        runBlocking { body() }
+        return true
+    }
+
+    override fun isActive(): Boolean = !destroyed && active
+
+    override fun cron(): String = cronText
+
+    override fun nextRun(): JetValue = JNull
 }
 
 data class CommandParam(
@@ -206,6 +246,7 @@ class CommandNode(
 
 interface ScriptEnvironment {
     fun registerInterval(name: String, ms: Int, body: suspend () -> Unit): IntervalHandle
+    fun registerSchedule(name: String, cron: String, line: Int, body: suspend () -> Unit): ScheduleHandle
     fun registerListener(
         eventType: String,
         line: Int,
@@ -266,6 +307,8 @@ class Interpreter(
             when (stmt) {
                 is Statement.FunctionDecl -> declareFunction(stmt, scope)
                 is Statement.IntervalDecl -> declareInterval(stmt, scope)
+                is Statement.ScheduleDecl -> declareSchedule(stmt, scope)
+                is Statement.EnumDecl -> declareEnum(stmt, scope)
                 is Statement.ListenerDecl -> declareListener(stmt, scope)
                 is Statement.CommandDecl  -> declareCommand(stmt, scope)
                 else -> Unit
@@ -285,6 +328,8 @@ class Interpreter(
             is Statement.ExprStatement -> evalExpr(stmt.expression, scope)
             is Statement.FunctionDecl -> declareFunction(stmt, scope)
             is Statement.IntervalDecl -> declareInterval(stmt, scope)
+            is Statement.ScheduleDecl -> declareSchedule(stmt, scope)
+            is Statement.EnumDecl -> declareEnum(stmt, scope)
             is Statement.ListenerDecl -> declareListener(stmt, scope)
             is Statement.IfStmt -> executeIf(stmt, scope)
             is Statement.WhileStmt -> executeWhile(stmt, scope)
@@ -481,6 +526,38 @@ class Interpreter(
         withScopeRuntimeError(stmt.line) {
             scope.define(stmt.name, JInterval(handle))
         }
+    }
+
+    private fun declareSchedule(stmt: Statement.ScheduleDecl, scope: Scope) {
+        val handle = env?.registerSchedule(stmt.name, stmt.cron, stmt.line) {
+            val child = scope.child()
+            try { executeBlock(stmt.body, child) } catch (_: ReturnSignal) {}
+        } ?: DetachedScheduleHandle(stmt.cron) {
+            val child = scope.child()
+            try { executeBlock(stmt.body, child) } catch (_: ReturnSignal) {}
+        }
+        withScopeRuntimeError(stmt.line) {
+            scope.define(stmt.name, JSchedule(handle))
+        }
+    }
+
+    private fun declareEnum(stmt: Statement.EnumDecl, scope: Scope) {
+        val fields = linkedMapOf<String, JetValue>()
+        for (entry in stmt.entries) {
+            fields[entry.name] = enumValue(entry.value)
+        }
+        val declaredType = JetType.TModule(fields.mapValues { (_, value) -> runtimeTypeOf(value) })
+        withScopeRuntimeError(stmt.line) {
+            scope.defineReadOnly(stmt.name, JModule(fields, declaredType), declaredType)
+        }
+    }
+
+    private fun enumValue(value: EnumValue?): JetValue = when (value) {
+        is EnumValue.IntValue -> JInt(value.value)
+        is EnumValue.FloatValue -> JFloat(value.value)
+        is EnumValue.StringValue -> JString(value.value)
+        is EnumValue.BoolValue -> JBool(value.value)
+        null -> JNull
     }
 
     private fun declareListener(stmt: Statement.ListenerDecl, scope: Scope) {

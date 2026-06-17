@@ -36,6 +36,19 @@ sealed class Statement {
         val body: List<Statement>,
         override val line: Int,
     ) : Statement()
+    data class ScheduleDecl(
+        val access: AccessModifier,
+        val name: String,
+        val cron: String,
+        val body: List<Statement>,
+        override val line: Int,
+    ) : Statement()
+    data class EnumDecl(
+        val access: AccessModifier,
+        val name: String,
+        val entries: List<EnumEntry>,
+        override val line: Int,
+    ) : Statement()
     data class ListenerDecl(
         val access: AccessModifier,
         val eventType: String,
@@ -144,5 +157,18 @@ data class DeconstructionBinding(
     val name: String?,
     val typeName: TypeRef?,
 )
+
+data class EnumEntry(
+    val name: String,
+    val value: EnumValue?,
+    val line: Int,
+)
+
+sealed class EnumValue {
+    data class IntValue(val value: Int) : EnumValue()
+    data class FloatValue(val value: Double) : EnumValue()
+    data class StringValue(val value: String) : EnumValue()
+    data class BoolValue(val value: Boolean) : EnumValue()
+}
 
 enum class AccessModifier { PUBLIC, PRIVATE, PROTECTED }

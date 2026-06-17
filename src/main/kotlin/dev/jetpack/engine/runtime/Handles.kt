@@ -8,6 +8,16 @@ interface IntervalHandle {
     fun isActive(): Boolean
 }
 
+interface ScheduleHandle {
+    fun destroy(): Boolean
+    fun activate(): Boolean
+    fun deactivate(): Boolean
+    fun trigger(): Boolean
+    fun isActive(): Boolean
+    fun cron(): String
+    fun nextRun(): JetValue
+}
+
 interface ListenerHandle {
     fun activate(): Boolean
     fun deactivate(): Boolean

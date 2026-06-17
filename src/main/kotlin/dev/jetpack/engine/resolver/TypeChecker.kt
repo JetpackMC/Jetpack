@@ -67,8 +67,10 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         for (stmt in stmts) {
             if (stmt is Statement.FunctionDecl) hoistFunction(stmt)
             if (stmt is Statement.IntervalDecl) defineType(stmt.name, JetType.TInterval, stmt.line)
+            if (stmt is Statement.ScheduleDecl) defineType(stmt.name, JetType.TSchedule, stmt.line)
             if (stmt is Statement.ListenerDecl) defineType(stmt.name, JetType.TListener, stmt.line)
             if (stmt is Statement.CommandDecl)  defineType(stmt.name, JetType.TCommand, stmt.line)
+            if (stmt is Statement.EnumDecl) defineType(stmt.name, enumType(stmt), stmt.line, isConst = true)
         }
         for (stmt in stmts) checkStmt(stmt)
         popScope()
@@ -146,6 +148,14 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
                 for (bodyStmt in stmt.body) checkStmt(bodyStmt)
                 popScope()
             }
+
+            is Statement.ScheduleDecl -> {
+                pushScope()
+                for (bodyStmt in stmt.body) checkStmt(bodyStmt)
+                popScope()
+            }
+
+            is Statement.EnumDecl -> Unit
 
             is Statement.ListenerDecl -> {
                 pushScope()
@@ -1158,10 +1168,23 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         is Statement.ExprStatement,
         is Statement.FunctionDecl,
         is Statement.IntervalDecl,
+        is Statement.ScheduleDecl,
         is Statement.ListenerDecl,
         is Statement.CommandDecl,
+        is Statement.EnumDecl,
         is Statement.Deconstruction -> setOf(FlowSignal.FALLTHROUGH)
     }
+
+    private fun enumType(stmt: Statement.EnumDecl): JetType.TModule =
+        JetType.TModule(stmt.entries.associate { entry ->
+            entry.name to when (entry.value) {
+                is EnumValue.IntValue -> JetType.TInt
+                is EnumValue.FloatValue -> JetType.TFloat
+                is EnumValue.StringValue -> JetType.TString
+                is EnumValue.BoolValue -> JetType.TBool
+                null -> JetType.TUnknown
+            }
+        })
 
     private fun analyzeTryFlow(stmt: Statement.TryStmt): Set<FlowSignal> {
         val outcomes = linkedSetOf<FlowSignal>()

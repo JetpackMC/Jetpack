@@ -18,6 +18,7 @@ sealed class JetValue {
 
     data class JBuiltin(val fn: suspend (List<JetValue>) -> JetValue) : JetValue()
     data class JInterval(val handle: IntervalHandle) : JetValue()
+    data class JSchedule(val handle: ScheduleHandle) : JetValue()
     data class JListener(val handle: ListenerHandle) : JetValue()
     data class JCommand(
         val handle: CommandHandle,
@@ -154,6 +155,7 @@ sealed class JetValue {
         is JFunction -> "function"
         is JBuiltin -> "function"
         is JInterval -> "interval"
+        is JSchedule -> "schedule"
         is JListener -> "listener"
         is JCommand -> "command"
     }
@@ -164,7 +166,7 @@ sealed class JetValue {
         is JFloat -> value != 0.0
         is JString -> value.isNotEmpty()
         JNull -> false
-        is JList, is JObject, is JModule, is JFunction, is JBuiltin, is JInterval, is JListener, is JCommand -> true
+        is JList, is JObject, is JModule, is JFunction, is JBuiltin, is JInterval, is JSchedule, is JListener, is JCommand -> true
     }
 
     fun toNumericDouble(): Double = when (this) {
@@ -197,6 +199,7 @@ sealed class JetValue {
         is JFunction -> "<function>"
         is JBuiltin -> "<builtin>"
         is JInterval -> "<interval>"
+        is JSchedule -> "<schedule>"
         is JListener -> "<listener>"
         is JCommand -> "<command>"
     }

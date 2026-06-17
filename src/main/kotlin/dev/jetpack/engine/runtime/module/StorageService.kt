@@ -19,6 +19,7 @@ import dev.jetpack.engine.runtime.JetValue.JList
 import dev.jetpack.engine.runtime.JetValue.JNull
 import dev.jetpack.engine.runtime.JetValue.JModule
 import dev.jetpack.engine.runtime.JetValue.JObject
+import dev.jetpack.engine.runtime.JetValue.JSchedule
 import dev.jetpack.engine.runtime.JetValue.JString
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -268,7 +269,7 @@ class StorageService(private val storageRoot: File) {
         is JInt -> JsonPrimitive(value.value)
         is JFloat -> JsonPrimitive(value.value)
         is JString -> JsonPrimitive(value.value)
-        is JFunction, is JBuiltin, is JInterval, is JListener, is JCommand, is JModule ->
+        is JFunction, is JBuiltin, is JInterval, is JSchedule, is JListener, is JCommand, is JModule ->
             throw IllegalArgumentException("Storage only supports JSON-compatible values")
         is JList -> {
             if (visiting.put(value, true) != null) {

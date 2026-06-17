@@ -41,11 +41,13 @@ class Lexer(private val source: String) {
             "until" to TokenType.KW_UNTIL,
             "interval" to TokenType.KW_INTERVAL,
             "listener" to TokenType.KW_LISTENER,
+            "schedule" to TokenType.KW_SCHEDULE,
             "command" to TokenType.KW_COMMAND,
             "default" to TokenType.KW_DEFAULT,
             "using" to TokenType.KW_USING,
             "as" to TokenType.KW_AS,
             "manifest" to TokenType.KW_MANIFEST,
+            "enum" to TokenType.KW_ENUM,
         )
     }
 
@@ -84,7 +86,7 @@ class Lexer(private val source: String) {
                 ch == '&' -> lexAnd()
                 ch == '|' -> lexOr()
                 ch == '"' || ch == '\'' -> lexString(ch)
-                ch == '$' && peek(1) == '"' -> lexInterpolatedString()
+                ch == '$' && (peek(1) == '"' || peek(1) == '\'') -> lexInterpolatedString(peek(1))
                 ch.isDigit() -> lexNumber()
                 ch.isLetter() || ch == '_' -> lexIdentifier()
                 else -> throw LexerException("Unexpected character '${ch}'", line)
@@ -224,13 +226,13 @@ class Lexer(private val source: String) {
         tokens.add(Token(TokenType.STRING_LITERAL, sb.toString(), line))
     }
 
-    private fun lexInterpolatedString() {
+    private fun lexInterpolatedString(quote: Char) {
         pos += 2
         val sb = StringBuilder()
         var braceDepth = 0
         var stringQuote: Char? = null
         var escapedInExprString = false
-        while (pos < source.length && !(source[pos] == '"' && braceDepth == 0 && stringQuote == null)) {
+        while (pos < source.length && !(source[pos] == quote && braceDepth == 0 && stringQuote == null)) {
             if (source[pos] == '\n') {
                 if (braceDepth > 0 && stringQuote == null) { line++; sb.append('\n'); pos++; continue }
                 throw LexerException("String is not closed", line)
@@ -268,6 +270,7 @@ class Lexer(private val source: String) {
                         'r'  -> '\r'
                         '\\' -> '\\'
                         '"'  -> '"'
+                        '\'' -> '\''
                         else -> throw LexerException("Invalid escape sequence", line)
                     })
                     pos++
