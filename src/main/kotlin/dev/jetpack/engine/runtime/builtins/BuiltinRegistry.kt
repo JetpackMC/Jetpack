@@ -164,6 +164,7 @@ class BuiltinRegistry : BuiltinTypeProvider {
             registry.register(ListBuiltin())
             registry.register(ObjectBuiltin())
             registry.register(IntervalBuiltin())
+            registry.register(ScheduleBuiltin())
             registry.register(ListenerBuiltin())
             registry.register(CommandBuiltin())
             registry.register(TypeBuiltin())

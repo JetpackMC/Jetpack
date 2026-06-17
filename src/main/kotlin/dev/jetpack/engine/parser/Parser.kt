@@ -270,6 +270,8 @@ class Parser(private val tokens: List<Token>) {
             }
             TokenType.KW_FUNCTION -> parseFunctionDecl(access ?: AccessModifier.PRIVATE, line)
             TokenType.KW_INTERVAL -> parseIntervalDecl(access ?: AccessModifier.PRIVATE, line)
+            TokenType.KW_SCHEDULE -> parseScheduleDecl(access ?: AccessModifier.PRIVATE, line)
+            TokenType.KW_ENUM -> parseEnumDecl(access ?: AccessModifier.PRIVATE, line)
             TokenType.KW_LISTENER -> parseListenerDecl(access ?: AccessModifier.PRIVATE, line)
             TokenType.KW_COMMAND -> parseCommandDecl(access ?: AccessModifier.PRIVATE, line, isRoot = true)
             TokenType.KW_CONST -> {
@@ -556,6 +558,85 @@ class Parser(private val tokens: List<Token>) {
         expect(TokenType.RPAREN, "Expected ')' after interval ms")
         val body = parseBlock()
         return Statement.IntervalDecl(access, name, ms, body, line)
+    }
+
+    private fun parseScheduleDecl(access: AccessModifier, line: Int): Statement.ScheduleDecl {
+        expect(TokenType.KW_SCHEDULE, "Expected 'schedule'")
+        val name = expect(TokenType.IDENTIFIER, "Expected schedule name").value
+        expect(TokenType.LPAREN, "Expected '(' after schedule name")
+        skipNewlines()
+        val cron = expect(TokenType.STRING_LITERAL, "Schedule cron must be a string literal").value
+        skipNewlines()
+        expect(TokenType.RPAREN, "Expected ')' after schedule cron")
+        val body = parseBlock()
+        return Statement.ScheduleDecl(access, name, cron, body, line)
+    }
+
+    private fun parseEnumDecl(access: AccessModifier, line: Int): Statement.EnumDecl {
+        expect(TokenType.KW_ENUM, "Expected 'enum'")
+        val name = expect(TokenType.IDENTIFIER, "Expected enum name").value
+        expect(TokenType.LBRACE, "Expected '{' after enum name")
+        skipNewlines()
+        val entries = mutableListOf<EnumEntry>()
+        var nextImplicitValue: Int? = 0
+
+        while (!check(TokenType.RBRACE) && !isAtEnd()) {
+            val entryLine = peek().line
+            val entryName = expect(TokenType.IDENTIFIER, "Expected enum entry name").value
+            val value = if (check(TokenType.EQ)) {
+                advance()
+                parseEnumValue().also {
+                    nextImplicitValue = when (it) {
+                        is EnumValue.IntValue -> it.value + 1
+                        else -> null
+                    }
+                }
+            } else {
+                val implicit = nextImplicitValue
+                    ?: throw ParseException("Enum entry '$entryName' needs an explicit value after a non-integer enum value", entryLine)
+                nextImplicitValue = implicit + 1
+                EnumValue.IntValue(implicit)
+            }
+            entries += EnumEntry(entryName, value, entryLine)
+            skipNewlines()
+            if (check(TokenType.COMMA)) {
+                advance()
+                skipNewlines()
+            } else if (!check(TokenType.RBRACE)) {
+                throw ParseException("Expected ',' or '}' after enum entry", peek().line)
+            }
+        }
+
+        expect(TokenType.RBRACE, "Expected '}' to close enum")
+        if (entries.isEmpty()) throw ParseException("Enum '$name' must declare at least one entry", line)
+        return Statement.EnumDecl(access, name, entries, line)
+    }
+
+    private fun parseEnumValue(): EnumValue {
+        val negative = if (check(TokenType.MINUS)) {
+            advance()
+            true
+        } else false
+        val token = advance()
+        return when (token.type) {
+            TokenType.INT_LITERAL -> {
+                val value = token.value.toIntOrNull()
+                    ?: throw ParseException("Integer literal '${token.value}' is out of range (${Int.MIN_VALUE}..${Int.MAX_VALUE})", token.line)
+                EnumValue.IntValue(if (negative) -value else value)
+            }
+            TokenType.FLOAT_LITERAL -> {
+                EnumValue.FloatValue(if (negative) -token.value.toDouble() else token.value.toDouble())
+            }
+            TokenType.STRING_LITERAL -> {
+                if (negative) throw ParseException("Enum string value cannot be negative", token.line)
+                EnumValue.StringValue(token.value)
+            }
+            TokenType.BOOL_LITERAL -> {
+                if (negative) throw ParseException("Enum bool value cannot be negative", token.line)
+                EnumValue.BoolValue(token.value == "true")
+            }
+            else -> throw ParseException("Enum value must be a string, number, or bool literal", token.line)
+        }
     }
 
     private fun parseListenerDecl(access: AccessModifier, line: Int): Statement.ListenerDecl {

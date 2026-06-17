@@ -9,6 +9,7 @@ sealed class JetType {
     object TNull     : JetType() { override fun toString() = "null" }
     object TFunction : JetType() { override fun toString() = "function" }
     object TInterval : JetType() { override fun toString() = "interval" }
+    object TSchedule : JetType() { override fun toString() = "schedule" }
     object TListener : JetType() { override fun toString() = "listener" }
     object TCommand  : JetType() { override fun toString() = "command" }
 

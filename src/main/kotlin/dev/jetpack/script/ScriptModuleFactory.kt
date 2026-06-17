@@ -61,6 +61,24 @@ internal class ScriptModuleFactory(private val scriptsRoot: File) {
                         availableAfterDeclaration = true,
                     )
                 }
+                is Statement.ScheduleDecl -> {
+                    exports[stmt.name] = ModuleExportDefinition(
+                        name = stmt.name,
+                        access = stmt.access,
+                        type = JetType.TSchedule,
+                        isReadOnly = true,
+                        availableAfterDeclaration = true,
+                    )
+                }
+                is Statement.EnumDecl -> {
+                    exports[stmt.name] = ModuleExportDefinition(
+                        name = stmt.name,
+                        access = stmt.access,
+                        type = enumType(stmt),
+                        isReadOnly = true,
+                        availableAfterDeclaration = true,
+                    )
+                }
                 is Statement.ListenerDecl -> {
                     exports[stmt.name] = ModuleExportDefinition(
                         name = stmt.name,
@@ -98,4 +116,15 @@ internal class ScriptModuleFactory(private val scriptsRoot: File) {
         }
         return exports
     }
+
+    private fun enumType(stmt: Statement.EnumDecl): JetType.TModule =
+        JetType.TModule(stmt.entries.associate { entry ->
+            entry.name to when (entry.value) {
+                is dev.jetpack.engine.parser.ast.EnumValue.IntValue -> JetType.TInt
+                is dev.jetpack.engine.parser.ast.EnumValue.FloatValue -> JetType.TFloat
+                is dev.jetpack.engine.parser.ast.EnumValue.StringValue -> JetType.TString
+                is dev.jetpack.engine.parser.ast.EnumValue.BoolValue -> JetType.TBool
+                null -> JetType.TUnknown
+            }
+        })
 }

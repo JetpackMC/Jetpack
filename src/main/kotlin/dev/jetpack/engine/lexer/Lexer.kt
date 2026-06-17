@@ -41,11 +41,13 @@ class Lexer(private val source: String) {
             "until" to TokenType.KW_UNTIL,
             "interval" to TokenType.KW_INTERVAL,
             "listener" to TokenType.KW_LISTENER,
+            "schedule" to TokenType.KW_SCHEDULE,
             "command" to TokenType.KW_COMMAND,
             "default" to TokenType.KW_DEFAULT,
             "using" to TokenType.KW_USING,
             "as" to TokenType.KW_AS,
             "manifest" to TokenType.KW_MANIFEST,
+            "enum" to TokenType.KW_ENUM,
         )
     }
 

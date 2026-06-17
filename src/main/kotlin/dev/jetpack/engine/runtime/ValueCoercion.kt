@@ -9,6 +9,7 @@ import dev.jetpack.engine.runtime.JetValue.JFloat
 import dev.jetpack.engine.runtime.JetValue.JFunction
 import dev.jetpack.engine.runtime.JetValue.JInt
 import dev.jetpack.engine.runtime.JetValue.JInterval
+import dev.jetpack.engine.runtime.JetValue.JSchedule
 import dev.jetpack.engine.runtime.JetValue.JList
 import dev.jetpack.engine.runtime.JetValue.JListener
 import dev.jetpack.engine.runtime.JetValue.JNull
@@ -28,6 +29,7 @@ fun runtimeTypeOf(value: JetValue): JetType = when (value) {
     is JFunction -> JetType.TCallable(value.returnType ?: JetType.TUnknown, listOf(paramsToCallSignature(value.params)))
     is JBuiltin -> JetType.TFunction
     is JInterval -> JetType.TInterval
+    is JSchedule -> JetType.TSchedule
     is JListener -> JetType.TListener
     is JCommand -> JetType.TCommand
 }
@@ -41,6 +43,7 @@ fun coerceValueToType(value: JetValue, expectedType: JetType?): JetValue = when 
     JetType.TNull,
     JetType.TFunction,
     JetType.TInterval,
+    JetType.TSchedule,
     JetType.TListener,
     JetType.TCommand,
     is JetType.TModule,

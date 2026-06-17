@@ -29,6 +29,7 @@ import dev.jetpack.engine.runtime.Interpreter
 import dev.jetpack.engine.runtime.JetValue
 import dev.jetpack.engine.runtime.ListenerHandle
 import dev.jetpack.engine.runtime.RuntimeError
+import dev.jetpack.engine.runtime.ScheduleHandle
 import dev.jetpack.engine.runtime.Scope
 import dev.jetpack.engine.runtime.ScriptEnvironment
 import dev.jetpack.engine.runtime.builtins.Builtin
@@ -106,6 +107,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         extensionRegistry.unregisterExtensions(owner)
 
     private val intervals = mutableMapOf<String, MutableList<ManagedInterval>>()
+    private val schedules = mutableMapOf<String, MutableList<ManagedSchedule>>()
     private val scriptListeners = mutableMapOf<String, MutableList<ListenerHandle>>()
     private val scriptCommandHandles = mutableMapOf<String, MutableList<CommandHandle>>()
     private val scriptCommands = mutableMapOf<String, MutableList<Command>>()
@@ -150,6 +152,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     fun stop(file: File) = withBatchedCommandRefresh {
         val canonicalPath = file.canonicalPath
         intervals.remove(canonicalPath)?.forEach { it.destroy() }
+        schedules.remove(canonicalPath)?.forEach { it.destroy() }
         scriptListeners.remove(canonicalPath)?.forEach { it.destroy() }
         scriptCommandHandles.remove(canonicalPath)?.forEach { it.destroy() }
         scriptCommands.remove(canonicalPath)
@@ -161,6 +164,8 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         coroutineScope.coroutineContext[Job]?.cancelChildren()
         intervals.values.forEach { list -> list.forEach { it.destroy() } }
         intervals.clear()
+        schedules.values.forEach { list -> list.forEach { it.destroy() } }
+        schedules.clear()
         scriptListeners.values.forEach { list -> list.forEach { it.destroy() } }
         scriptListeners.clear()
         scriptCommandHandles.values.forEach { list -> list.forEach { it.destroy() } }
@@ -189,14 +194,16 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         module.scope = scope
 
         val scriptIntervals = mutableListOf<ManagedInterval>()
+        val scriptSchedules = mutableListOf<ManagedSchedule>()
         val listenerHandles = mutableListOf<ListenerHandle>()
         val commandHandles = mutableListOf<CommandHandle>()
         val canonicalPath = module.meta.file.canonicalPath
         intervals[canonicalPath] = scriptIntervals
+        schedules[canonicalPath] = scriptSchedules
         scriptListeners[canonicalPath] = listenerHandles
         scriptCommandHandles[canonicalPath] = commandHandles
 
-        val environment = createEnvironment(module, scriptIntervals, listenerHandles, commandHandles)
+        val environment = createEnvironment(module, scriptIntervals, scriptSchedules, listenerHandles, commandHandles)
         val interpreter = Interpreter(builtins = builtinRegistry, env = environment)
 
         try {
@@ -223,6 +230,8 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
                         is Statement.Manifest,
                         is Statement.FunctionDecl,
                         is Statement.IntervalDecl,
+                        is Statement.ScheduleDecl,
+                        is Statement.EnumDecl,
                         is Statement.ListenerDecl,
                         is Statement.CommandDecl -> Unit
                         else -> {
@@ -264,6 +273,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     private fun createEnvironment(
         module: ScriptModule,
         scriptIntervals: MutableList<ManagedInterval>,
+        scriptSchedules: MutableList<ManagedSchedule>,
         listenerHandles: MutableList<ListenerHandle>,
         commandHandles: MutableList<CommandHandle>,
     ): ScriptEnvironment = object : ScriptEnvironment {
@@ -283,6 +293,27 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             )
             scriptIntervals.add(interval)
             return interval
+        }
+
+        override fun registerSchedule(name: String, cron: String, line: Int, body: suspend () -> Unit): ScheduleHandle {
+            val schedule = try {
+                ManagedSchedule(
+                    plugin = plugin,
+                    cronText = cron,
+                    onRun = body,
+                    scope = coroutineScope,
+                    reportRuntimeError = { error ->
+                        reportError(module.meta.scriptId, error.message ?: "Runtime error", error.line, module.sourceLines)
+                    },
+                    reportUnknownError = { error ->
+                        reportError(module.meta.scriptId, error.message ?: "Unknown error", 0, module.sourceLines)
+                    },
+                )
+            } catch (error: IllegalArgumentException) {
+                throw RuntimeError(error.message ?: "Invalid schedule cron", line, "ArgumentException")
+            }
+            scriptSchedules.add(schedule)
+            return schedule
         }
 
         override fun registerListener(

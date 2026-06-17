@@ -10,6 +10,7 @@ import dev.jetpack.engine.runtime.IntervalHandle
 import dev.jetpack.engine.runtime.JetValue
 import dev.jetpack.engine.runtime.ListenerHandle
 import dev.jetpack.engine.runtime.ScopeException
+import dev.jetpack.engine.runtime.ScheduleHandle
 
 internal class ScriptImportBinder(
     private val extensions: ExtensionModuleRegistry,
@@ -395,6 +396,15 @@ internal class ScriptImportBinder(
             override fun deactivate(): Boolean = throw RuntimeException("Cannot deactivate a protected interval from another file")
             override fun trigger(): Boolean = value.handle.trigger()
             override fun isActive(): Boolean = value.handle.isActive()
+        })
+        is JetValue.JSchedule -> JetValue.JSchedule(object : ScheduleHandle {
+            override fun destroy(): Boolean = throw RuntimeException("Cannot destroy a protected schedule from another file")
+            override fun activate(): Boolean = throw RuntimeException("Cannot activate a protected schedule from another file")
+            override fun deactivate(): Boolean = throw RuntimeException("Cannot deactivate a protected schedule from another file")
+            override fun trigger(): Boolean = value.handle.trigger()
+            override fun isActive(): Boolean = value.handle.isActive()
+            override fun cron(): String = value.handle.cron()
+            override fun nextRun(): JetValue = value.handle.nextRun()
         })
         is JetValue.JListener -> JetValue.JListener(object : ListenerHandle {
             override fun activate(): Boolean = throw RuntimeException("Cannot activate a protected listener from another file")
