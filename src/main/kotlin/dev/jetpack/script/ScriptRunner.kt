@@ -50,8 +50,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     private val coroutineScope = CoroutineScope(SupervisorJob() + mainDispatcher)
     private val threadDispatcher = Dispatchers.Default
     private val extensionRegistry = ExtensionModuleRegistry()
-    private val moduleFactory: ScriptModuleFactory
-        get() = ScriptModuleFactory(scriptsRoot)
+    private val moduleFactory: ScriptModuleFactory by lazy { ScriptModuleFactory(scriptsRoot) }
     private val importBinder = ScriptImportBinder(extensionRegistry) { scriptName, message, sourceLines, line, prevLine ->
         plugin.sendScriptError(formatScriptError(scriptName, message, sourceLines, line, prevLine))
     }
@@ -86,8 +85,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     private val scriptCommandHandles = mutableMapOf<String, MutableList<CommandHandle>>()
     private val scriptCommands = mutableMapOf<String, MutableList<Command>>()
 
-    val scriptsRoot: File
-        get() = File(plugin.dataFolder, "scripts")
+    val scriptsRoot: File by lazy { File(plugin.dataFolder, "scripts") }
 
     fun createBaseScope(): Scope = Scope()
 

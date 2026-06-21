@@ -63,13 +63,17 @@ fun coerceValueToType(value: JetValue, expectedType: JetType?): JetValue = when 
 
     is JetType.TList -> when (value) {
         is JList -> {
-            for (index in value.elements.indices) {
-                value.elements[index] = coerceValueToType(value.elements[index], expectedType.elementType)
+            if (value.declaredElementType == expectedType.elementType) {
+                value
+            } else {
+                for (index in value.elements.indices) {
+                    value.elements[index] = coerceValueToType(value.elements[index], expectedType.elementType)
+                }
+                if (value.declaredElementType == null || value.declaredElementType == JetType.TUnknown) {
+                    value.declaredElementType = expectedType.elementType
+                }
+                value
             }
-            if (value.declaredElementType == null || value.declaredElementType == JetType.TUnknown) {
-                value.declaredElementType = expectedType.elementType
-            }
-            value
         }
         else -> value
     }

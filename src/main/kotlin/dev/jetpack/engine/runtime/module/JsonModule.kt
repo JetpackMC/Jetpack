@@ -128,13 +128,16 @@ class JsonModule {
                 else -> throw RuntimeException("Function 'json.parse' produced an unsupported primitive value")
             }
         }
-        element.isJsonArray -> JList(element.asJsonArray.map(::deserializeValue).toMutableList())
+        element.isJsonArray -> {
+            val array = element.asJsonArray
+            JList(array.mapTo(ArrayList(array.size()), ::deserializeValue))
+        }
         element.isJsonObject -> {
             val fields = linkedMapOf<String, JetValue>()
             for ((key, fieldValue) in element.asJsonObject.entrySet()) {
                 fields[key] = deserializeValue(fieldValue)
             }
-            JObject(fields.toMutableMap())
+            JObject(fields)
         }
         else -> throw RuntimeException("Function 'json.parse' produced an unsupported value")
     }

@@ -101,5 +101,5 @@ jobs:
           version: ${{ steps.release_meta.outputs.version }}
           changelog: ${{ steps.release_notes.outputs.changelog }}
           loaders: paper
-          game-versions: "1.21.10"
+          game-versions: "1.21.10, 1.21.11"
           files: build/libs/Jetpack.jar

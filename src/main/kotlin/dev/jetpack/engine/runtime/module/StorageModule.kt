@@ -9,6 +9,8 @@ import dev.jetpack.engine.runtime.JetValue.JBuiltin
 import dev.jetpack.engine.runtime.JetValue.JList
 import dev.jetpack.engine.runtime.JetValue.JModule
 import dev.jetpack.engine.runtime.JetValue.JString
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class StorageModule(private val storageService: StorageService) {
 
@@ -43,7 +45,7 @@ class StorageModule(private val storageService: StorageService) {
     )
 
     private fun builtin(handler: (List<JetValue>) -> JetValue): JetValue =
-        JBuiltin(handler)
+        JBuiltin { args -> withContext(Dispatchers.IO) { handler(args) } }
 
     private fun create(args: List<JetValue>): JetValue {
         return JBool(storageService.create(requireStringArg(args[0], "storage.create")))

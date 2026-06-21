@@ -316,14 +316,15 @@ class StorageService(private val storageRoot: File) {
             }
         }
         element.isJsonArray -> {
-            JList(element.asJsonArray.map { deserializeValue(it) }.toMutableList())
+            val array = element.asJsonArray
+            JList(array.mapTo(ArrayList(array.size())) { deserializeValue(it) })
         }
         element.isJsonObject -> {
             val fields = linkedMapOf<String, JetValue>()
             for ((key, fieldValue) in element.asJsonObject.entrySet()) {
                 fields[key] = deserializeValue(fieldValue)
             }
-            JObject(fields.toMutableMap())
+            JObject(fields)
         }
         else -> throw StorageReadException("Storage contains an unsupported value type")
     }
