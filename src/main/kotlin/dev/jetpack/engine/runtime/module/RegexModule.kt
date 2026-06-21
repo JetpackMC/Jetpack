@@ -5,11 +5,14 @@ import dev.jetpack.engine.parser.ast.callable
 import dev.jetpack.engine.parser.ast.signature
 import dev.jetpack.engine.runtime.JetValue
 import dev.jetpack.engine.runtime.JetValue.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 import java.util.regex.PatternSyntaxException
 
 class RegexModule {
+
+    private val patternCache = ConcurrentHashMap<String, Pattern>()
 
     fun spec(): ModuleSpec = ModuleSpec(
         name = "regex",
@@ -41,10 +44,16 @@ class RegexModule {
 
     private fun builtin(handler: (List<JetValue>) -> JetValue): JetValue = JBuiltin { handler(it) }
 
-    private fun compile(pattern: String, fn: String): Pattern = try {
-        Pattern.compile(pattern)
-    } catch (e: PatternSyntaxException) {
-        throw RuntimeException("Function '$fn': invalid regex pattern: ${e.description}")
+    private fun compile(pattern: String, fn: String): Pattern {
+        patternCache[pattern]?.let { return it }
+        val compiled = try {
+            Pattern.compile(pattern)
+        } catch (e: PatternSyntaxException) {
+            throw RuntimeException("Function '$fn': invalid regex pattern: ${e.description}")
+        }
+        if (patternCache.size >= MAX_CACHED_PATTERNS) patternCache.clear()
+        patternCache[pattern] = compiled
+        return compiled
     }
 
     private fun requireString(value: JetValue): String =
@@ -108,5 +117,9 @@ class RegexModule {
     private fun escape(args: List<JetValue>): JetValue {
         val str = requireString(args[0])
         return JString(Pattern.quote(str))
+    }
+
+    private companion object {
+        private const val MAX_CACHED_PATTERNS = 256
     }
 }

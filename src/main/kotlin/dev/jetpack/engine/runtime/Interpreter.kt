@@ -443,7 +443,7 @@ class Interpreter(
             fields = linkedMapOf(
                 "type" to JString(error.exceptionType),
                 "message" to JString(error.message ?: ""),
-                "line" to JInt(error.line),
+                "line" to JInt.of(error.line),
             ),
             isReadOnly = true,
         )
@@ -553,10 +553,10 @@ class Interpreter(
     }
 
     private fun enumValue(value: EnumValue?): JetValue = when (value) {
-        is EnumValue.IntValue -> JInt(value.value)
+        is EnumValue.IntValue -> JInt.of(value.value)
         is EnumValue.FloatValue -> JFloat(value.value)
         is EnumValue.StringValue -> JString(value.value)
-        is EnumValue.BoolValue -> JBool(value.value)
+        is EnumValue.BoolValue -> JBool.of(value.value)
         null -> JNull
     }
 
@@ -663,10 +663,10 @@ class Interpreter(
     }
 
     suspend fun evalExpr(expr: Expression, scope: Scope): JetValue = when (expr) {
-        is Expression.IntLiteral -> JInt(expr.value)
+        is Expression.IntLiteral -> JInt.of(expr.value)
         is Expression.FloatLiteral -> JFloat(expr.value)
         is Expression.StringLiteral -> JString(expr.value)
-        is Expression.BoolLiteral -> JBool(expr.value)
+        is Expression.BoolLiteral -> JBool.of(expr.value)
         is Expression.NullLiteral -> JNull
         is Expression.InterpolatedString -> evalInterpolated(expr, scope)
         is Expression.ListLiteral -> {
@@ -820,15 +820,16 @@ class Interpreter(
         val elements = ArrayList<JetValue>(rangeSize)
         if (start <= end) {
             val endVal = if (inclusive) end else end - 1
-            for (i in start..endVal) elements.add(JInt(i))
+            for (i in start..endVal) elements.add(JInt.of(i))
         } else {
             val endVal = if (inclusive) end else end + 1
-            for (i in start downTo endVal) elements.add(JInt(i))
+            for (i in start downTo endVal) elements.add(JInt.of(i))
         }
         return JList(elements, declaredElementType = JetType.TInt)
     }
 
     private fun resolveIdentifier(expr: Expression.Identifier, scope: Scope): JetValue {
+        scope.getOrNull(expr.name)?.let { return it }
         builtins.resolveGlobal(expr.name)?.let { return JBuiltin(it) }
         return withScopeRuntimeError(expr.line) {
             scope.get(expr.name)
@@ -840,20 +841,20 @@ class Interpreter(
 
         if (op == TokenType.AMP_AMP) {
             val left = evalCondition(expr.left, scope, "Operator '&&' cannot be applied to null")
-            if (!left.isTruthy()) return JBool(false)
-            return JBool(evalCondition(expr.right, scope, "Operator '&&' cannot be applied to null").isTruthy())
+            if (!left.isTruthy()) return JBool.of(false)
+            return JBool.of(evalCondition(expr.right, scope, "Operator '&&' cannot be applied to null").isTruthy())
         }
         if (op == TokenType.PIPE_PIPE) {
             val left = evalCondition(expr.left, scope, "Operator '||' cannot be applied to null")
-            if (left.isTruthy()) return JBool(true)
-            return JBool(evalCondition(expr.right, scope, "Operator '||' cannot be applied to null").isTruthy())
+            if (left.isTruthy()) return JBool.of(true)
+            return JBool.of(evalCondition(expr.right, scope, "Operator '||' cannot be applied to null").isTruthy())
         }
 
         val left = evalExpr(expr.left, scope)
         val right = evalExpr(expr.right, scope)
         return when {
-            op == TokenType.EQ_EQ -> JBool(jetEquals(left, right))
-            op == TokenType.BANG_EQ -> JBool(!jetEquals(left, right))
+            op == TokenType.EQ_EQ -> JBool.of(jetEquals(left, right))
+            op == TokenType.BANG_EQ -> JBool.of(!jetEquals(left, right))
             op == TokenType.PLUS && left is JString && right is JString ->
                 JString(left.value + right.value)
             op == TokenType.PLUS && left is JList && right is JList -> {
@@ -890,7 +891,7 @@ class Interpreter(
             }
             left.isNumeric() && right.isNumeric() -> evalNumericOp(left, right, op, expr.line)
             op == TokenType.KW_IN -> when (right) {
-                is JList -> JBool(right.elements.any { jetEquals(left, it) })
+                is JList -> JBool.of(right.elements.any { jetEquals(left, it) })
                 is JObject -> {
                     val key = (left as? JString)
                         ?: throw RuntimeError(
@@ -898,7 +899,7 @@ class Interpreter(
                             expr.line,
                             "TypeException",
                         )
-                    JBool(right.hasField(key.value))
+                    JBool.of(right.hasField(key.value))
                 }
                 is JString -> {
                     val sub = (left as? JString)
@@ -907,7 +908,7 @@ class Interpreter(
                             expr.line,
                             "TypeException",
                         )
-                    JBool(right.value.contains(sub.value))
+                    JBool.of(right.value.contains(sub.value))
                 }
                 else -> throw RuntimeError(
                     "Operator 'in' cannot be applied to type '${right.typeName()}'",
@@ -931,25 +932,25 @@ class Interpreter(
             val li = leftInt.value
             val ri = rightInt.value
             return when (op) {
-                TokenType.PLUS -> JInt(li + ri)
-                TokenType.MINUS -> JInt(li - ri)
-                TokenType.STAR -> JInt(li * ri)
+                TokenType.PLUS -> JInt.of(li + ri)
+                TokenType.MINUS -> JInt.of(li - ri)
+                TokenType.STAR -> JInt.of(li * ri)
                 TokenType.SLASH -> {
                     if (ri == 0) throw RuntimeError("Division by zero", line, "ArithmeticException")
-                    JInt(li / ri)
+                    JInt.of(li / ri)
                 }
                 TokenType.PERCENT -> {
                     if (ri == 0) throw RuntimeError("Division by zero", line, "ArithmeticException")
-                    JInt(li % ri)
+                    JInt.of(li % ri)
                 }
                 TokenType.STAR_STAR -> {
-                    if (ri >= 0) JInt(intPow(li, ri, line))
+                    if (ri >= 0) JInt.of(intPow(li, ri, line))
                     else JFloat(Math.pow(li.toDouble(), ri.toDouble()))
                 }
-                TokenType.LT -> JBool(li < ri)
-                TokenType.LT_EQ -> JBool(li <= ri)
-                TokenType.GT -> JBool(li > ri)
-                TokenType.GT_EQ -> JBool(li >= ri)
+                TokenType.LT -> JBool.of(li < ri)
+                TokenType.LT_EQ -> JBool.of(li <= ri)
+                TokenType.GT -> JBool.of(li > ri)
+                TokenType.GT_EQ -> JBool.of(li >= ri)
                 else -> throw RuntimeError("Unknown numeric operator '${op}'", line, "TypeException")
             }
         }
@@ -968,10 +969,10 @@ class Interpreter(
                 JFloat(l % r)
             }
             TokenType.STAR_STAR -> JFloat(Math.pow(l, r))
-            TokenType.LT -> JBool(l < r)
-            TokenType.LT_EQ -> JBool(l <= r)
-            TokenType.GT -> JBool(l > r)
-            TokenType.GT_EQ -> JBool(l >= r)
+            TokenType.LT -> JBool.of(l < r)
+            TokenType.LT_EQ -> JBool.of(l <= r)
+            TokenType.GT -> JBool.of(l > r)
+            TokenType.GT_EQ -> JBool.of(l >= r)
             else -> throw RuntimeError("Unknown numeric operator '${op}'", line, "TypeException")
         }
     }
@@ -984,7 +985,7 @@ class Interpreter(
                     scope.get(expr.operand.name)
                 }
                 val newVal = when (current) {
-                    is JInt -> if (op == TokenType.PLUS_PLUS) JInt(current.value + 1) else JInt(current.value - 1)
+                    is JInt -> if (op == TokenType.PLUS_PLUS) JInt.of(current.value + 1) else JInt.of(current.value - 1)
                     is JFloat -> if (op == TokenType.PLUS_PLUS) JFloat(current.value + 1) else JFloat(current.value - 1)
                     else -> throw RuntimeError("Operator '${expr.operator.value}' requires a numeric value", expr.line, "TypeException")
                 }
@@ -996,7 +997,7 @@ class Interpreter(
             }
             val current = evalExpr(expr.operand, scope)
             val newVal = when {
-                current is JInt -> if (op == TokenType.PLUS_PLUS) JInt(current.value + 1) else JInt(current.value - 1)
+                current is JInt -> if (op == TokenType.PLUS_PLUS) JInt.of(current.value + 1) else JInt.of(current.value - 1)
                 current is JFloat -> if (op == TokenType.PLUS_PLUS) JFloat(current.value + 1) else JFloat(current.value - 1)
                 else -> throw RuntimeError("Operator '${expr.operator.value}' requires a numeric value", expr.line, "TypeException")
             }
@@ -1007,13 +1008,13 @@ class Interpreter(
         val operand = evalExpr(expr.operand, scope)
         return when (op) {
             TokenType.MINUS -> when (operand) {
-                is JInt -> JInt(-operand.value)
+                is JInt -> JInt.of(-operand.value)
                 is JFloat -> JFloat(-operand.value)
                 else -> throw RuntimeError("Operator '-' requires a numeric value", expr.line, "TypeException")
             }
             TokenType.BANG -> {
                 if (operand is JNull) throw RuntimeError("Operator '!' cannot be applied to null", expr.line, "TypeException")
-                JBool(!operand.isTruthy())
+                JBool.of(!operand.isTruthy())
             }
             else -> throw RuntimeError("Unknown unary operator '${expr.operator.value}'", expr.line, "TypeException")
         }

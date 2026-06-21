@@ -142,9 +142,12 @@ object EventBridge {
                         binding.priority,
                         eventCallback@{ _, event ->
                             if (!binding.eventClass.isInstance(event)) return@eventCallback
-                            val callbacks = handlers[key].orEmpty()
-                                .filter { it.active && !it.destroyed }
-                            if (callbacks.isEmpty()) return@eventCallback
+                            val callbacks = handlers[key] ?: return@eventCallback
+                            var hasActive = false
+                            for (entry in callbacks) {
+                                if (entry.active && !entry.destroyed) { hasActive = true; break }
+                            }
+                            if (!hasActive) return@eventCallback
                             val reflected = reflectToJetValue(event)
                             val jetValue = if (event is Cancellable) {
                                 overlayObject(reflected, mapOf("cancel" to JBuiltin { _ ->
@@ -154,7 +157,9 @@ object EventBridge {
                             } else {
                                 reflected
                             }
-                            callbacks.forEach { it.callback(jetValue) }
+                            for (entry in callbacks) {
+                                if (entry.active && !entry.destroyed) entry.callback(jetValue)
+                            }
                         },
                         plugin,
                         binding.ignoreCancelled,

@@ -37,13 +37,13 @@ object NativeBridge {
         null -> JNull
         is JetValue -> value
         is String -> JString(value)
-        is Boolean -> JBool(value)
+        is Boolean -> JBool.of(value)
         is Double -> JFloat(value)
         is Float -> JFloat(value.toDouble())
-        is Long -> JInt(requireJetInt(value, "long"))
-        is Int -> JInt(value)
-        is Short -> JInt(value.toInt())
-        is Byte -> JInt(value.toInt())
+        is Long -> JInt.of(requireJetInt(value, "long"))
+        is Int -> JInt.of(value)
+        is Short -> JInt.of(value.toInt())
+        is Byte -> JInt.of(value.toInt())
         is Number -> throw RuntimeException("Unsupported native numeric type '${value.javaClass.simpleName}'")
         is Enum<*> -> if (enumAsString) JString(value.name) else wrapObject(value, enumAsString)
         is Char -> JString(value.toString())

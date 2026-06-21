@@ -27,6 +27,14 @@ sealed class JetValue {
     ) : JetValue()
     data class JInt(val value: Int) : JetValue() {
         override fun toString() = value.toString()
+
+        companion object {
+            private const val LOW = -128
+            private const val HIGH = 255
+            private val cache = Array(HIGH - LOW + 1) { JInt(it + LOW) }
+
+            fun of(value: Int): JInt = if (value in LOW..HIGH) cache[value - LOW] else JInt(value)
+        }
     }
     data class JFloat(val value: Double) : JetValue()
     data class JString(val value: String) : JetValue() {
@@ -34,6 +42,13 @@ sealed class JetValue {
     }
     data class JBool(val value: Boolean) : JetValue() {
         override fun toString() = value.toString()
+
+        companion object {
+            val TRUE = JBool(true)
+            val FALSE = JBool(false)
+
+            fun of(value: Boolean): JBool = if (value) TRUE else FALSE
+        }
     }
     data class JList(
         val elements: MutableList<JetValue>,
