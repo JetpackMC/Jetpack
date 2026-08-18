@@ -10,6 +10,7 @@ import dev.jetpack.engine.runtime.JetValue.JModule
 import dev.jetpack.engine.runtime.JetValue.JNull
 import dev.jetpack.engine.runtime.JetValue.JObject
 import dev.jetpack.engine.runtime.JetValue.JString
+import org.bukkit.plugin.Plugin
 import java.lang.reflect.Array as ReflectArray
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field
@@ -18,7 +19,15 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.util.concurrent.ConcurrentHashMap
 
-class NativeClassHandle(val type: Class<*>)
+class NativeClassHandle(
+    val type: Class<*>,
+    val owner: Plugin? = null,
+)
+
+private data class NativeObjectHandle(
+    val value: Any,
+    val owner: Plugin,
+)
 
 object NativeBridge {
     private val methodCache = ConcurrentHashMap<Class<*>, Map<String, List<Method>>>()
@@ -33,7 +42,16 @@ object NativeBridge {
         cacheResolvedMembers = true,
     )
 
-    fun wrap(value: Any?, enumAsString: Boolean = false): JetValue = when (value) {
+    fun wrap(value: Any?, enumAsString: Boolean = false): JetValue =
+        wrap(value, enumAsString, owner = null)
+
+    internal fun wrapOwned(value: Any?, owner: Plugin): JetValue =
+        wrap(value, false, owner)
+
+    internal fun wrapOwnedClass(type: Class<*>, owner: Plugin): JObject =
+        wrapClass(type, owner)
+
+    private fun wrap(value: Any?, enumAsString: Boolean, owner: Plugin?): JetValue = when (value) {
         null -> JNull
         is JetValue -> value
         is String -> JString(value)
@@ -45,11 +63,15 @@ object NativeBridge {
         is Short -> JInt.of(value.toInt())
         is Byte -> JInt.of(value.toInt())
         is Number -> throw RuntimeException("Unsupported native numeric type '${value.javaClass.simpleName}'")
-        is Enum<*> -> if (enumAsString) JString(value.name) else wrapObject(value, enumAsString)
+        is Enum<*> -> if (enumAsString) JString(value.name) else wrapObject(value, enumAsString, owner)
         is Char -> JString(value.toString())
-        is Collection<*> -> JList(value.map { wrap(it, enumAsString) }.toMutableList())
-        is Map<*, *> -> wrapMap(value, enumAsString)
-        else -> if (value.javaClass.isArray) wrapArray(value, enumAsString) else wrapObject(value, enumAsString)
+        is Collection<*> -> JList(value.map { wrap(it, enumAsString, owner) }.toMutableList())
+        is Map<*, *> -> wrapMap(value, enumAsString, owner)
+        else -> if (value.javaClass.isArray) {
+            wrapArray(value, enumAsString, owner)
+        } else {
+            wrapObject(value, enumAsString, owner)
+        }
     }
 
     fun overlayObject(base: JObject, extraFields: Map<String, JetValue>): JObject = JObject(
@@ -68,28 +90,34 @@ object NativeBridge {
 
     fun call(callee: JetValue, args: List<JetValue>): JetValue? {
         val handle = (callee as? JObject)?.nativeObject as? NativeClassHandle ?: return null
-        return invokeConstructor(handle.type, args)
+        requireOwnerEnabled(handle.owner)
+        return invokeConstructor(handle.type, args, handle.owner)
     }
 
     fun callMember(target: JetValue, name: String, args: List<JetValue>): JetValue? {
         val native = (target as? JObject)?.nativeObject ?: return null
         if (native is NativeClassHandle) {
+            requireOwnerEnabled(native.owner)
             val methods = staticMethodsFor(native.type)[name] ?: return null
-            return invokeMethod(null, name, methods, args)
+            return invokeMethod(null, name, methods, args, owner = native.owner)
         }
-        val methods = methodsFor(native.javaClass)[name] ?: return null
-        return invokeMethod(native, name, methods, args)
+        val receiver = unwrapNativeObject(native)
+        val methods = methodsFor(receiver.javaClass)[name] ?: return null
+        return invokeMethod(receiver, name, methods, args, owner = ownerOf(native))
     }
 
     private fun resolvePackageMember(packageName: String, name: String): JetValue {
         val qualifiedName = "$packageName.$name"
-        return loadClass(qualifiedName)?.let(::wrapClass) ?: packageModule(qualifiedName)
+        return loadClass(qualifiedName)?.let { wrapClass(it, owner = null) } ?: packageModule(qualifiedName)
     }
 
-    private fun wrapClass(type: Class<*>): JObject = JObject(
+    private fun wrapClass(type: Class<*>, owner: Plugin?): JObject = JObject(
         fields = mutableMapOf(),
         isReadOnly = true,
-        memberResolver = { name -> resolveClassMember(type, name) },
+        memberResolver = { name ->
+            requireOwnerEnabled(owner)
+            resolveClassMember(type, name, owner)
+        },
         memberNamesProvider = {
             linkedSetOf<String>().apply {
                 addAll(enumConstantNames(type))
@@ -98,47 +126,58 @@ object NativeBridge {
             }
         },
         cacheResolvedMembers = false,
-        nativeObject = NativeClassHandle(type),
+        nativeObject = NativeClassHandle(type, owner),
     )
 
-    private fun wrapObject(value: Any, enumAsString: Boolean): JObject = JObject(
+    private fun wrapObject(value: Any, enumAsString: Boolean, owner: Plugin?): JObject = JObject(
         fields = mutableMapOf(),
         isReadOnly = true,
-        memberResolver = { name -> resolveObjectMember(value, name, enumAsString) },
+        memberResolver = { name ->
+            requireOwnerEnabled(owner)
+            resolveObjectMember(value, name, enumAsString, owner)
+        },
         memberNamesProvider = {
             linkedSetOf<String>().apply {
                 addAll(fieldsFor(value.javaClass).keys)
                 addAll(methodsFor(value.javaClass).keys)
             }
         },
-        memberAssigner = { name, newValue -> assignObjectMember(value, name, newValue) },
+        memberAssigner = { name, newValue ->
+            requireOwnerEnabled(owner)
+            assignObjectMember(value, name, newValue, owner)
+        },
         cacheResolvedMembers = false,
-        nativeObject = value,
+        nativeObject = owner?.let { NativeObjectHandle(value, it) } ?: value,
     )
 
-    private fun resolveClassMember(type: Class<*>, name: String): JetValue? {
-        enumConstant(type, name)?.let { return wrap(it) }
-        staticFieldsFor(type)[name]?.let { return readField(null, it) }
+    private fun resolveClassMember(type: Class<*>, name: String, owner: Plugin?): JetValue? {
+        enumConstant(type, name)?.let { return wrap(it, false, owner) }
+        staticFieldsFor(type)[name]?.let { return readField(null, it, owner) }
         staticMethodsFor(type)[name]?.let { methods ->
-            return JBuiltin { args -> invokeMethod(null, name, methods, args) }
+            return JBuiltin { args -> invokeMethod(null, name, methods, args, owner = owner) }
         }
         return null
     }
 
-    private fun resolveObjectMember(receiver: Any, name: String, enumAsString: Boolean): JetValue? {
+    private fun resolveObjectMember(
+        receiver: Any,
+        name: String,
+        enumAsString: Boolean,
+        owner: Plugin?,
+    ): JetValue? {
         propertyGetter(receiver.javaClass, name)?.let {
-            return invokeMethod(receiver, it.name, listOf(it), emptyList(), enumAsString)
+            return invokeMethod(receiver, it.name, listOf(it), emptyList(), enumAsString, owner)
         }
-        fieldsFor(receiver.javaClass)[name]?.let { return readField(receiver, it) }
+        fieldsFor(receiver.javaClass)[name]?.let { return readField(receiver, it, owner) }
         methodsFor(receiver.javaClass)[name]?.let { methods ->
-            return JBuiltin { args -> invokeMethod(receiver, name, methods, args, enumAsString) }
+            return JBuiltin { args -> invokeMethod(receiver, name, methods, args, enumAsString, owner) }
         }
         return null
     }
 
-    private fun assignObjectMember(receiver: Any, name: String, value: JetValue) {
+    private fun assignObjectMember(receiver: Any, name: String, value: JetValue, owner: Plugin?) {
         propertySetter(receiver.javaClass, name, value)?.let { method ->
-            invokeMethod(receiver, method.name, listOf(method), listOf(value))
+            invokeMethod(receiver, method.name, listOf(method), listOf(value), owner = owner)
             return
         }
         val field = fieldsFor(receiver.javaClass)[name]
@@ -176,7 +215,7 @@ object NativeBridge {
     private fun isBooleanReturn(method: Method): Boolean =
         method.returnType == Boolean::class.java || method.returnType == java.lang.Boolean.TYPE
 
-    private fun invokeConstructor(type: Class<*>, args: List<JetValue>): JetValue {
+    private fun invokeConstructor(type: Class<*>, args: List<JetValue>, owner: Plugin?): JetValue {
         val constructor = selectConstructor(type.constructors.toList(), args)
             ?: throw RuntimeException("Constructor '${type.name}' does not accept the provided arguments")
         val result = try {
@@ -187,7 +226,7 @@ object NativeBridge {
         } catch (error: Exception) {
             throw RuntimeException(error.message ?: "Constructor '${type.name}' failed")
         }
-        return wrap(result)
+        return wrap(result, false, owner)
     }
 
     private fun invokeMethod(
@@ -196,7 +235,9 @@ object NativeBridge {
         methods: List<Method>,
         args: List<JetValue>,
         enumAsString: Boolean = false,
+        owner: Plugin? = null,
     ): JetValue {
+        requireOwnerEnabled(owner)
         val invocation = selectExecutable(methods, args)
             ?: throw RuntimeException("Method '$name' does not accept the provided arguments")
         val result = try {
@@ -207,13 +248,15 @@ object NativeBridge {
         } catch (error: Exception) {
             throw RuntimeException(error.message ?: "Method '$name' failed")
         }
-        return wrap(result, enumAsString)
+        return wrap(result, enumAsString, owner)
     }
 
-    private fun readField(receiver: Any?, field: Field): JetValue =
+    private fun readField(receiver: Any?, field: Field, owner: Plugin?): JetValue =
         try {
-            wrap(field.get(receiver))
+            requireOwnerEnabled(owner)
+            wrap(field.get(receiver), false, owner)
         } catch (error: Exception) {
+            if (error is NativeAccessException) throw error
             throw RuntimeException(error.message ?: "Native field '${field.name}' access failed")
         }
 
@@ -305,8 +348,14 @@ object NativeBridge {
         }
         if (value is JObject) {
             val native = value.nativeObject
-            if (native is NativeClassHandle && targetType == Class::class.java) return native.type to 1
-            if (native != null && targetType.isInstance(native)) return native to 0
+            if (native is NativeClassHandle && targetType == Class::class.java) {
+                requireOwnerEnabled(native.owner)
+                return native.type to 1
+            }
+            if (native != null) {
+                val unwrapped = unwrapNativeObject(native)
+                if (targetType.isInstance(unwrapped)) return unwrapped to 0
+            }
         }
         convertNumeric(value, targetType)?.let { return it }
         return when {
@@ -368,7 +417,10 @@ object NativeBridge {
 
     private fun convertEnum(value: JetValue, targetType: Class<*>): Pair<Any?, Int>? {
         val native = (value as? JObject)?.nativeObject
-        if (native != null && targetType.isInstance(native)) return native to 0
+        if (native != null) {
+            val unwrapped = unwrapNativeObject(native)
+            if (targetType.isInstance(unwrapped)) return unwrapped to 0
+        }
         val raw = (value as? JString)?.value ?: return null
         val constants = targetType.enumConstants?.filterIsInstance<Enum<*>>() ?: return null
         constants.firstOrNull { it.name == raw }?.let { return it to 3 }
@@ -386,24 +438,30 @@ object NativeBridge {
         return array to totalScore + 5
     }
 
-    private fun wrapArray(value: Any, enumAsString: Boolean): JList {
+    private fun wrapArray(value: Any, enumAsString: Boolean, owner: Plugin?): JList {
         val size = ReflectArray.getLength(value)
-        return JList(MutableList(size) { index -> wrap(ReflectArray.get(value, index), enumAsString) })
+        return JList(MutableList(size) { index -> wrap(ReflectArray.get(value, index), enumAsString, owner) })
     }
 
-    private fun wrapMap(value: Map<*, *>, enumAsString: Boolean): JObject {
+    private fun wrapMap(value: Map<*, *>, enumAsString: Boolean, owner: Plugin?): JObject {
         val fields = linkedMapOf<String, JetValue>()
         for ((key, rawValue) in value) {
-            fields[key?.toString() ?: continue] = wrap(rawValue, enumAsString)
+            fields[key?.toString() ?: continue] = wrap(rawValue, enumAsString, owner)
         }
-        return JObject(fields.toMutableMap(), isReadOnly = true, nativeObject = value)
+        return JObject(
+            fields.toMutableMap(),
+            isReadOnly = true,
+            nativeObject = owner?.let { NativeObjectHandle(value, it) } ?: value,
+        )
     }
 
     private fun unwrapList(value: JList): List<Any?> =
         value.elements.map(::unwrapValue)
 
     private fun unwrapObject(value: JObject): Any? =
-        value.nativeObject?.takeUnless { it is NativeClassHandle }
+        value.nativeObject
+            ?.takeUnless { it is NativeClassHandle }
+            ?.let(::unwrapNativeObject)
             ?: value.fields.mapValues { (_, fieldValue) -> unwrapValue(fieldValue) }
 
     private fun unwrapModule(value: JModule): Map<String, Any?> =
@@ -464,6 +522,26 @@ object NativeBridge {
 
     private fun enumConstant(type: Class<*>, name: String): Enum<*>? =
         type.enumConstants?.filterIsInstance<Enum<*>>()?.firstOrNull { it.name == name }
+
+    private fun ownerOf(native: Any): Plugin? = when (native) {
+        is NativeClassHandle -> native.owner
+        is NativeObjectHandle -> native.owner
+        else -> null
+    }
+
+    private fun unwrapNativeObject(native: Any): Any = when (native) {
+        is NativeObjectHandle -> {
+            requireOwnerEnabled(native.owner)
+            native.value
+        }
+        else -> native
+    }
+
+    private fun requireOwnerEnabled(owner: Plugin?) {
+        if (owner != null && !owner.isEnabled) {
+            throw NativeAccessException("Plugin '${owner.name}' is no longer enabled")
+        }
+    }
 
     private fun loadClass(name: String): Class<*>? {
         if (!name.startsWith("org.bukkit.")) return null
