@@ -11,7 +11,7 @@ Build features in a small scripting language without recompilation or restarts.
 
 - Write server logic in `.jet` files and load them live, with no Java build or restart
 - Register commands, react to server events, and run timed intervals
-- Reach the full Paper/Bukkit API through a native bridge
+- Reach the Paper/Bukkit API and public members of enabled Paper plugins through a native bridge
 - Statically typed, so errors are caught before a script runs
 
 ## Requirements

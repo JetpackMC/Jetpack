@@ -12,6 +12,7 @@ import dev.jetpack.engine.parser.ast.toJetTypeOrNull
 import dev.jetpack.engine.runtime.JetValue.*
 import dev.jetpack.engine.runtime.builtins.BuiltinRegistry
 import dev.jetpack.engine.runtime.nativeapi.NativeBridge
+import dev.jetpack.engine.runtime.nativeapi.NativeAccessException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -790,7 +791,15 @@ class Interpreter(
         for (part in expr.parts) {
             sb.append(when (part) {
                 is Expression.InterpolationPart.Literal -> part.text
-                is Expression.InterpolationPart.Expr -> evalExpr(part.expression, scope).toString()
+                is Expression.InterpolationPart.Expr -> try {
+                    evalExpr(part.expression, scope).toString()
+                } catch (e: NativeAccessException) {
+                    throw RuntimeError(
+                        e.message ?: "Native access failed",
+                        part.expression.line,
+                        "NativeException",
+                    )
+                }
             })
         }
         return JString(sb.toString())
@@ -1057,6 +1066,8 @@ class Interpreter(
             is JBuiltin -> {
                 try {
                     callee.fn(args)
+                } catch (e: NativeAccessException) {
+                    throw RuntimeError(e.message ?: "Native access failed", line, "NativeException")
                 } catch (e: RuntimeException) {
                     throw RuntimeError(e.message ?: "Builtin call failed", line, "RuntimeException")
                 }
@@ -1227,6 +1238,8 @@ class Interpreter(
                     }
                 } catch (e: RuntimeError) {
                     throw e
+                } catch (e: NativeAccessException) {
+                    throw RuntimeError(e.message ?: "Native access failed", target.line, "NativeException")
                 } catch (e: RuntimeException) {
                     throw RuntimeError(e.message ?: "Cannot assign member", target.line, "KeyException")
                 }
@@ -1312,6 +1325,8 @@ class Interpreter(
             return target.getField(member) ?: throw RuntimeError("Object $referenceKind '$member' does not exist", line, "KeyException")
         } catch (e: RuntimeError) {
             throw e
+        } catch (e: NativeAccessException) {
+            throw RuntimeError(e.message ?: "Native access failed", line, "NativeException")
         } catch (e: RuntimeException) {
             throw RuntimeError(e.message ?: "Object access failed", line, "KeyException")
         }
