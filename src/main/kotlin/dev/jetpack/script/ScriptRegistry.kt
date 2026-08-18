@@ -49,17 +49,16 @@ class ScriptRegistry(private val plugin: JetpackPlugin) {
     private val loaded = mutableListOf<ScriptMeta>()
 
     fun loadAll(): ScriptLoadReport {
-        plugin.scriptRunner.stopAll()
-        known.clear()
-        loaded.clear()
-
         val parsed = scanParsedScripts()
         val sorted = parsed.parsedScripts.sortedBy { it.meta.scriptId }
-        known.addAll(sorted.map { it.meta })
         val disabled = plugin.pluginConfig.disabledScripts.toSet()
         val enabled = sorted.filter { it.meta.scriptId !in disabled }
-        val loadedPaths = plugin.scriptRunner.runAll(enabled.map { it.module })
+        val loadedPaths = plugin.scriptRunner.replaceAll(enabled.map { it.module })
         val loadedScripts = enabled.map { it.meta }.filter { it.file.canonicalPath in loadedPaths }
+
+        known.clear()
+        known.addAll(sorted.map { it.meta })
+        loaded.clear()
         loaded.addAll(loadedScripts)
 
         val failedScriptIds = linkedSetOf<String>()

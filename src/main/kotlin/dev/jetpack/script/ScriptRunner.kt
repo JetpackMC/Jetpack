@@ -37,6 +37,7 @@ import org.bukkit.event.EventPriority
 import org.bukkit.plugin.Plugin
 import java.io.File
 import java.util.IdentityHashMap
+import java.util.logging.Level
 import kotlin.coroutines.CoroutineContext
 
 class ScriptRunner(private val plugin: JetpackPlugin) {
@@ -57,8 +58,6 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
     val builtinRegistry: BuiltinRegistry
         get() = extensionRegistry.builtinRegistry
-    private var syncMethodResolved = false
-    private var cachedSyncMethod: java.lang.reflect.Method? = null
     private var commandRefreshBatchDepth = 0
     private var commandRefreshPending = false
     private val modulesByCanonicalPath = linkedMapOf<String, ScriptModule>()
@@ -89,30 +88,35 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
     fun createBaseScope(): Scope = Scope()
 
-    fun runAll(parsedModules: List<ScriptModule>): Set<String> = withBatchedCommandRefresh {
-        modulesByCanonicalPath.clear()
-        modulesByLogicalPath.clear()
-
+    fun replaceAll(parsedModules: List<ScriptModule>): Set<String> {
+        val preparedByCanonicalPath = linkedMapOf<String, ScriptModule>()
+        val preparedByLogicalPath = linkedMapOf<String, ScriptModule>()
         for (module in parsedModules) {
-            modulesByCanonicalPath[module.meta.file.canonicalPath] = module
-            modulesByLogicalPath[module.displayPath] = module
+            preparedByCanonicalPath[module.meta.file.canonicalPath] = module
+            preparedByLogicalPath[module.displayPath] = module
         }
 
         for (module in parsedModules) {
-            importBinder.resolveImports(module, modulesByCanonicalPath, modulesByLogicalPath)
+            importBinder.resolveImports(module, preparedByCanonicalPath, preparedByLogicalPath)
         }
 
         for (module in parsedModules) {
             importBinder.validateModule(module, ArrayDeque())
         }
 
-        val loaded = linkedSetOf<String>()
-        for (module in parsedModules) {
-            if (module.validationState == true && ensureLoaded(module)) {
-                loaded += module.meta.file.canonicalPath
+        return withBatchedCommandRefresh {
+            stopAll()
+            modulesByCanonicalPath.putAll(preparedByCanonicalPath)
+            modulesByLogicalPath.putAll(preparedByLogicalPath)
+
+            val loaded = linkedSetOf<String>()
+            for (module in parsedModules) {
+                if (module.validationState == true && ensureLoaded(module)) {
+                    loaded += module.meta.file.canonicalPath
+                }
             }
+            loaded
         }
-        return loaded
     }
 
     fun createParsedModule(
@@ -472,7 +476,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         }
     }
 
-    private inline fun <T> withBatchedCommandRefresh(block: () -> T): T {
+    private fun <T> withBatchedCommandRefresh(block: () -> T): T {
         commandRefreshBatchDepth++
         try {
             return block()
@@ -494,17 +498,16 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     }
 
     private fun refreshCommandTreeNow() {
-        if (!syncMethodResolved) {
-            cachedSyncMethod = plugin.server.javaClass.methods.firstOrNull { method ->
-                method.parameterCount == 0 && method.name in setOf("syncCommands", "updateCommands")
+        for (player in plugin.server.onlinePlayers) {
+            try {
+                player.updateCommands()
+            } catch (exception: Exception) {
+                plugin.logger.log(
+                    Level.WARNING,
+                    "Failed to refresh commands for ${player.name}",
+                    exception,
+                )
             }
-            syncMethodResolved = true
-        }
-        val method = cachedSyncMethod ?: return
-        try {
-            method.invoke(plugin.server)
-        } catch (_: ReflectiveOperationException) {
-            return
         }
     }
 
