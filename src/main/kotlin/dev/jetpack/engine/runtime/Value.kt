@@ -26,8 +26,6 @@ sealed class JetValue {
         val subcommands: Map<String, JCommand> = emptyMap(),
     ) : JetValue()
     data class JInt(val value: Int) : JetValue() {
-        override fun toString() = value.toString()
-
         companion object {
             private const val LOW = -128
             private const val HIGH = 255
@@ -37,12 +35,8 @@ sealed class JetValue {
         }
     }
     data class JFloat(val value: Double) : JetValue()
-    data class JString(val value: String) : JetValue() {
-        override fun toString() = value
-    }
+    data class JString(val value: String) : JetValue()
     data class JBool(val value: Boolean) : JetValue() {
-        override fun toString() = value.toString()
-
         companion object {
             val TRUE = JBool(true)
             val FALSE = JBool(false)
@@ -154,9 +148,7 @@ sealed class JetValue {
             )
         }
     }
-    object JNull : JetValue() {
-        override fun toString() = "null"
-    }
+    object JNull : JetValue()
 
     fun typeName(): String = when (this) {
         is JInt -> "int"
@@ -192,7 +184,7 @@ sealed class JetValue {
 
     fun isNumeric(): Boolean = this is JInt || this is JFloat
 
-    open override fun toString(): String = renderValue(this, 0, IdentityHashMap())
+    final override fun toString(): String = renderValue(this, 0, IdentityHashMap())
 
     private fun renderValue(
         value: JetValue,
