@@ -146,6 +146,7 @@ data class CommandParam(
     val typeName: String?,
     val declaredType: JetType?,
     val default: (suspend () -> JetValue)?,
+    val suggestions: (suspend () -> List<String>)?,
     val placeholder: String,
     val line: Int,
 )
@@ -491,6 +492,14 @@ class Interpreter(
                 typeName = param.typeName?.name,
                 declaredType = param.typeName?.toJetTypeOrNull(),
                 default = param.default?.let { expr -> { evalExpr(expr, scope) } },
+                suggestions = stmt.annotations.suggestions[param.name]?.let { suggestion ->
+                    {
+                        suggestionValues(
+                            evalExpr(suggestion.expression, scope),
+                            suggestion.line,
+                        )
+                    }
+                },
                 placeholder = stmt.annotations.placeholders[param.name]?.value ?: param.name,
                 line = stmt.line,
             )
@@ -515,6 +524,23 @@ class Interpreter(
             createInvocationScope = { scope.child() },
             bodyItems = items,
             annotations = stmt.annotations,
+        )
+    }
+
+    private fun suggestionValues(value: JetValue, line: Int): List<String> = when (value) {
+        is JString -> listOf(value.value)
+        is JList -> value.elements.map { element ->
+            (element as? JString)?.value
+                ?: throw RuntimeError(
+                    "Suggestion list values must be strings, got '${element.typeName()}'",
+                    line,
+                    "TypeException",
+                )
+        }
+        else -> throw RuntimeError(
+            "Suggestion expression must evaluate to string or list<string>, got '${value.typeName()}'",
+            line,
+            "TypeException",
         )
     }
 

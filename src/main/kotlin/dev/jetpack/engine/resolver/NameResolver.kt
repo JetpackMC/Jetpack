@@ -226,6 +226,7 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
 
             is Statement.CommandDecl -> {
                 if (!isFileScope) error("Command can only be declared at file scope", stmt.line)
+                resolveCommandSuggestions(stmt)
                 val prevFn = insideFunction
                 val prevLoop = insideLoop
                 val prevFile = isFileScope
@@ -283,6 +284,15 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
             }
         }
         popScope()
+    }
+
+    private fun resolveCommandSuggestions(stmt: Statement.CommandDecl) {
+        stmt.annotations.suggestions.values.forEach { suggestion ->
+            resolveExpr(suggestion.expression)
+        }
+        stmt.bodyItems.filterIsInstance<CommandBodyItem.SubCommand>().forEach { item ->
+            resolveCommandSuggestions(item.decl)
+        }
     }
 
     private fun resolveBlock(stmts: List<Statement>) {

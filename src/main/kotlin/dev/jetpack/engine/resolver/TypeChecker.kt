@@ -297,7 +297,10 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
                 }
             }
 
-            is Statement.CommandDecl -> checkCommandDecl(stmt, stmt.senderName)
+            is Statement.CommandDecl -> {
+                checkCommandSuggestions(stmt)
+                checkCommandDecl(stmt, stmt.senderName)
+            }
         }
     }
 
@@ -353,6 +356,26 @@ class TypeChecker(private val typeProvider: BuiltinTypeProvider? = null) {
         }
         currentReturnType = prevReturn
         popScope()
+    }
+
+    private fun checkCommandSuggestions(stmt: Statement.CommandDecl) {
+        for ((name, suggestion) in stmt.annotations.suggestions) {
+            val type = inferExpr(suggestion.expression)
+            val acceptsSuggestions = type == JetType.TString ||
+                type is JetType.TList && (
+                    type.elementType == JetType.TString ||
+                        suggestion.expression is Expression.ListLiteral && suggestion.expression.elements.isEmpty()
+                    )
+            if (!acceptsSuggestions) {
+                errors.add(TypeCheckerError(
+                    "Suggestion for command parameter '$name' must evaluate to string or list<string>, got '$type'",
+                    suggestion.line,
+                ))
+            }
+        }
+        stmt.bodyItems.filterIsInstance<CommandBodyItem.SubCommand>().forEach { item ->
+            checkCommandSuggestions(item.decl)
+        }
     }
 
     private fun checkBlock(stmts: List<Statement>, predefinedTypes: Map<String, JetType> = emptyMap()) {
