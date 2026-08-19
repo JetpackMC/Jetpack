@@ -1,6 +1,6 @@
 package dev.jetpack.engine.resolver
 
-import dev.jetpack.event.JetpackEvent
+import dev.jetpack.event.EventCatalog
 import dev.jetpack.engine.parser.ast.CatchClause
 import dev.jetpack.engine.parser.ast.CommandBodyItem
 import dev.jetpack.engine.parser.ast.Expression
@@ -138,7 +138,7 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
 
             is Statement.ListenerDecl -> {
                 if (!isFileScope) error("Listener can only be declared at file scope", stmt.line)
-                if (JetpackEvent.resolve(stmt.eventType) == null)
+                if (!EventCatalog.isKnown(stmt.eventType))
                     error("Unknown event type '${stmt.eventType}'", stmt.line)
                 val priority = stmt.annotations.priority
                 if (priority != null) {
@@ -226,6 +226,7 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
 
             is Statement.CommandDecl -> {
                 if (!isFileScope) error("Command can only be declared at file scope", stmt.line)
+                resolveCommandSuggestions(stmt)
                 val prevFn = insideFunction
                 val prevLoop = insideLoop
                 val prevFile = isFileScope
@@ -283,6 +284,15 @@ class NameResolver(private val reservedNames: Set<String> = emptySet()) {
             }
         }
         popScope()
+    }
+
+    private fun resolveCommandSuggestions(stmt: Statement.CommandDecl) {
+        stmt.annotations.suggestions.values.forEach { suggestion ->
+            resolveExpr(suggestion.expression)
+        }
+        stmt.bodyItems.filterIsInstance<CommandBodyItem.SubCommand>().forEach { item ->
+            resolveCommandSuggestions(item.decl)
+        }
     }
 
     private fun resolveBlock(stmts: List<Statement>) {

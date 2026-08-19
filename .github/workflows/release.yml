@@ -36,11 +36,11 @@ jobs:
             exit 1
           fi
 
-      - name: Set up JDK 21
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -101,5 +101,5 @@ jobs:
           version: ${{ steps.release_meta.outputs.version }}
           changelog: ${{ steps.release_notes.outputs.changelog }}
           loaders: paper
-          game-versions: "1.21.10, 1.21.11"
+          game-versions: "1.21.10, 1.21.11, 26.1, 26.1.1, 26.1.2, 26.2"
           files: build/libs/Jetpack.jar

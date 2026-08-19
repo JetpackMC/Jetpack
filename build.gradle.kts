@@ -1,16 +1,18 @@
+import org.gradle.api.attributes.java.TargetJvmVersion
 import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.api.tasks.compile.JavaCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.net.URLClassLoader
 import java.util.jar.JarFile
 import java.util.jar.JarEntry
 import java.lang.reflect.Modifier
 
 plugins {
-    kotlin("jvm") version "2.1.0"
+    kotlin("jvm") version "2.2.21"
 }
 
 group = "dev.jetpack"
-version = "1.0.6"
+version = "1.0.7"
 
 repositories {
     mavenCentral()
@@ -20,17 +22,31 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:26.2.build.112-stable")
     implementation(kotlin("stdlib"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 }
 
+// The Paper API is compiled for Java 25, so reading it requires a JDK 25 toolchain.
+// Output stays on Java 21 so the plugin still loads on servers running the minimum supported JDK.
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_21
+    }
 }
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
+    options.release = 21
+}
+
+// The Paper API is only published for JVM 25, so resolution would otherwise reject it against a
+// Java 21 target. It is compileOnly and never shipped, so accepting it here does not affect output.
+configurations.compileClasspath {
+    attributes {
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 25)
+    }
 }
 
 fun resolvedArtifacts() = configurations["compileClasspath"]
@@ -72,27 +88,29 @@ fun scanEvents(classLoader: ClassLoader, jar: File): List<Pair<String, String>> 
     }.sortedBy { it.first }
 }
 
-tasks.register("generateEventEnum") {
-    val outputFile = file("src/main/kotlin/dev/jetpack/event/JetpackEvent.kt")
+// Event classes are recorded as names rather than class literals: the catalog is generated from the
+// newest Paper API, and servers on older supported versions legitimately lack some of these classes.
+// A class literal would make the whole enum fail to initialize there; a name fails only for itself.
+tasks.register("generateEventCatalog") {
+    val enumFile = file("src/main/kotlin/dev/jetpack/event/JetpackEvent.kt")
+    val indexFile = file("generated/events.json")
     inputs.files(paperJar())
-    outputs.file(outputFile)
+    outputs.files(enumFile, indexFile)
 
     doLast {
-        val classLoader = buildClassLoader()
-        val events = scanEvents(classLoader, paperJar())
+        val events = scanEvents(buildClassLoader(), paperJar())
 
-        outputFile.parentFile.mkdirs()
-        outputFile.writeText(buildString {
+        enumFile.parentFile.mkdirs()
+        enumFile.writeText(buildString {
             appendLine("package dev.jetpack.event")
-            appendLine("import org.bukkit.event.Event")
             appendLine()
             appendLine("/* Auto-generated from Paper API. Do not edit manually. */")
             appendLine("enum class JetpackEvent(")
-            appendLine("    val eventClass: Class<out Event>,")
+            appendLine("    val className: String,")
             appendLine(") {")
             events.forEachIndexed { i, (simple, fqn) ->
-                val comma = if (i < events.size - 1) "," else ";"
-                appendLine("    $simple($fqn::class.java)$comma")
+                val terminator = if (i < events.size - 1) "," else ";"
+                appendLine("    $simple(\"$fqn\")$terminator")
             }
             appendLine()
             appendLine("    companion object {")
@@ -101,11 +119,14 @@ tasks.register("generateEventEnum") {
             appendLine("    }")
             appendLine("}")
         })
+
+        indexFile.parentFile.mkdirs()
+        indexFile.writeText(events.joinToString(",\n  ", "[\n  ", "\n]\n") { "\"${it.first}\"" })
     }
 }
 
 tasks.named("compileKotlin") {
-    dependsOn("generateEventEnum")
+    dependsOn("generateEventCatalog")
 }
 
 tasks.jar {

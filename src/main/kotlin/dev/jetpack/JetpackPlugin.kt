@@ -10,6 +10,7 @@ import dev.jetpack.engine.runtime.module.BukkitModule
 import dev.jetpack.engine.runtime.module.ModuleSpec
 import dev.jetpack.i18n.LocaleManager
 import dev.jetpack.engine.runtime.module.MathModule
+import dev.jetpack.engine.runtime.module.PaperModule
 import dev.jetpack.engine.runtime.module.PluginsModule
 import dev.jetpack.engine.runtime.module.JsonModule
 import dev.jetpack.engine.runtime.module.RandomModule
@@ -140,6 +141,7 @@ class JetpackPlugin : JavaPlugin() {
             TimeModule(this).spec(),
             RegexModule().spec(),
             BukkitModule().spec(),
+            PaperModule().spec(),
             PluginsModule(server.pluginManager).spec(),
             HttpModule().spec(),
         )

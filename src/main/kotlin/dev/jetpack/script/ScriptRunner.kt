@@ -13,11 +13,13 @@ import com.mojang.brigadier.arguments.StringArgumentType
 import com.mojang.brigadier.builder.ArgumentBuilder
 import com.mojang.brigadier.builder.LiteralArgumentBuilder
 import com.mojang.brigadier.builder.RequiredArgumentBuilder
+import com.mojang.brigadier.suggestion.Suggestions
+import com.mojang.brigadier.suggestion.SuggestionsBuilder
 import com.mojang.brigadier.tree.LiteralCommandNode
 import dev.jetpack.JetpackPlugin
 import dev.jetpack.engine.runtime.builtins.RegistrationHandle
-import dev.jetpack.event.JetpackEvent
 import dev.jetpack.event.EventBridge
+import dev.jetpack.event.EventCatalog
 import dev.jetpack.engine.parser.ast.JetType
 import dev.jetpack.engine.parser.ast.Statement
 import dev.jetpack.engine.runtime.CommandHandle
@@ -53,10 +55,24 @@ import org.bukkit.event.Listener
 import org.bukkit.plugin.Plugin
 import java.io.File
 import java.util.IdentityHashMap
+import java.util.concurrent.CompletableFuture
 import java.util.logging.Level
 import kotlin.coroutines.CoroutineContext
 
+private object InertListenerHandle : ListenerHandle {
+    override fun activate(): Boolean = false
+    override fun deactivate(): Boolean = false
+    override fun destroy(): Boolean = false
+    override fun trigger(sender: JetValue): Boolean = false
+    override fun isActive(): Boolean = false
+}
+
 class ScriptRunner(private val plugin: JetpackPlugin) {
+
+    private data class RegisteredCommandNode(
+        val node: CommandNode,
+        val module: ScriptModule,
+    )
 
     private val mainDispatcher = object : CoroutineDispatcher() {
         override fun dispatch(context: CoroutineContext, block: Runnable) {
@@ -78,7 +94,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     private var commandRefreshPending = false
     private val modulesByCanonicalPath = linkedMapOf<String, ScriptModule>()
     private val modulesByLogicalPath = linkedMapOf<String, ScriptModule>()
-    private val commandNodes = IdentityHashMap<Command, CommandNode>()
+    private val commandNodes = IdentityHashMap<Command, RegisteredCommandNode>()
 
     init {
         plugin.server.pluginManager.registerEvents(object : Listener {
@@ -325,15 +341,15 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             ignoreCancelled: Boolean,
             body: suspend (JetValue) -> Unit,
         ): ListenerHandle {
-            if (JetpackEvent.resolve(eventType) == null) {
-                reportError(module.meta.scriptId, "Unknown event type '$eventType'", line, module.sourceLines)
-                return object : ListenerHandle {
-                    override fun activate(): Boolean = false
-                    override fun deactivate(): Boolean = false
-                    override fun destroy(): Boolean = false
-                    override fun trigger(sender: JetValue): Boolean = false
-                    override fun isActive(): Boolean = false
-                }
+            val rejection = when {
+                !EventCatalog.isKnown(eventType) -> "Unknown event type '$eventType'"
+                !EventCatalog.isSupported(eventType) ->
+                    "Event '$eventType' is not available on this server version"
+                else -> null
+            }
+            if (rejection != null) {
+                reportError(module.meta.scriptId, rejection, line, module.sourceLines)
+                return InertListenerHandle
             }
             val eventPriority = priority?.let {
                 runCatching { EventPriority.valueOf(it.uppercase()) }.getOrNull()
@@ -364,6 +380,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
         override fun registerCommand(node: CommandNode): CommandHandle {
             val canonicalPath = module.meta.file.canonicalPath
+            val registeredNode = RegisteredCommandNode(node, module)
             val cmd = object : Command(node.name) {
                 override fun execute(sender: CommandSender, commandLabel: String, args: Array<String>): Boolean {
                     val senderObj = buildSenderObject(sender, commandLabel, args)
@@ -389,7 +406,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             node.annotations.permission?.let { cmd.permission = it }
             node.annotations.permissionMessage?.let { cmd.permissionMessage = it }
             if (node.annotations.aliases.isNotEmpty()) cmd.aliases = node.annotations.aliases
-            commandNodes[cmd] = node
+            commandNodes[cmd] = registeredNode
             plugin.server.commandMap.register(plugin.name.lowercase(), cmd)
             scriptCommands.getOrPut(canonicalPath) { mutableListOf() }.add(cmd)
             requestCommandTreeRefresh()
@@ -403,7 +420,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
                 override fun activate(): Boolean = synchronized(lock) {
                     if (destroyed || active) return@synchronized false
-                    commandNodes[cmd] = node
+                    commandNodes[cmd] = registeredNode
                     plugin.server.commandMap.register(plugin.name.lowercase(), cmd)
                     active = true
                     requestCommandTreeRefresh()
@@ -622,28 +639,28 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
 
     @Suppress("UNCHECKED_CAST", "DEPRECATION")
     private fun replaceScriptCommandTree(event: CommandRegisteredEvent<*>) {
-        val node = commandNodes[event.command] ?: return
-        replaceScriptCommandTree(event as CommandRegisteredEvent<BukkitBrigadierCommandSource>, node)
+        val registered = commandNodes[event.command] ?: return
+        replaceScriptCommandTree(event as CommandRegisteredEvent<BukkitBrigadierCommandSource>, registered)
     }
 
     @Suppress("DEPRECATION")
     private fun <S : BukkitBrigadierCommandSource> replaceScriptCommandTree(
         event: CommandRegisteredEvent<S>,
-        node: CommandNode,
+        registered: RegisteredCommandNode,
     ) {
-        event.setLiteral(buildBrigadierLiteral(event.commandLabel, node, event.brigadierCommand))
+        event.setLiteral(buildBrigadierLiteral(event.commandLabel, registered, event.brigadierCommand))
         event.setRawCommand(true)
     }
 
     @Suppress("DEPRECATION")
     private fun <S : BukkitBrigadierCommandSource> buildBrigadierLiteral(
         label: String,
-        node: CommandNode,
+        registered: RegisteredCommandNode,
         command: BukkitBrigadierCommand<S>,
     ): LiteralCommandNode<S> {
         val literal = LiteralArgumentBuilder.literal<S>(label)
             .requires(command)
-        appendCommandShape(literal, node, command)
+        appendCommandShape(literal, registered.node, registered.module, command)
         return literal.build()
     }
 
@@ -651,6 +668,7 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
     private fun <S : BukkitBrigadierCommandSource> appendCommandShape(
         builder: ArgumentBuilder<S, *>,
         node: CommandNode,
+        module: ScriptModule,
         command: BukkitBrigadierCommand<S>,
     ) {
         val requiredCount = node.params.count { it.default == null }
@@ -664,6 +682,11 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
                 param.placeholder,
                 commandArgumentType(param) as ArgumentType<Any>,
             )
+            if (param.suggestions != null) {
+                argument.suggests { _, suggestionsBuilder ->
+                    buildSuggestions(param, module, suggestionsBuilder)
+                }
+            }
             if (index + 1 >= requiredCount) {
                 argument.executes(command)
             }
@@ -674,9 +697,39 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
         for (item in node.bodyItems) {
             if (item !is CommandItem.Sub) continue
             val literal = LiteralArgumentBuilder.literal<S>(item.node.name)
-            appendCommandShape(literal, item.node, command)
+            appendCommandShape(literal, item.node, module, command)
             current.then(literal)
         }
+    }
+
+    private fun buildSuggestions(
+        param: CommandParam,
+        module: ScriptModule,
+        builder: SuggestionsBuilder,
+    ): CompletableFuture<Suggestions> {
+        val provider = param.suggestions ?: return builder.buildFuture()
+        val future = CompletableFuture<Suggestions>()
+        coroutineScope.launch {
+            try {
+                val prefix = builder.remaining
+                for (suggestion in provider().distinct()) {
+                    if (suggestion.startsWith(prefix, ignoreCase = true)) {
+                        builder.suggest(suggestion)
+                    }
+                }
+                future.complete(builder.build())
+            } catch (error: CancellationException) {
+                future.cancel(false)
+                throw error
+            } catch (error: RuntimeError) {
+                reportError(module.meta.scriptId, error.message ?: "Runtime error", error.line, module.sourceLines)
+                future.complete(builder.build())
+            } catch (error: Exception) {
+                reportError(module.meta.scriptId, error.message ?: "Unknown error", 0, module.sourceLines)
+                future.complete(builder.build())
+            }
+        }
+        return future
     }
 
     private fun commandArgumentType(param: CommandParam): ArgumentType<*> = when (param.typeName) {
