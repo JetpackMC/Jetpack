@@ -16,8 +16,8 @@ Build features in a small scripting language without recompilation or restarts.
 
 ## Requirements
 
-- Paper 1.21.10 or newer
-- Java 21 or newer
+- Paper 1.21.10 or newer, up to 26.2
+- Java 21 or newer (Paper 26.x runs on Java 25)
 
 ## Installation
 
