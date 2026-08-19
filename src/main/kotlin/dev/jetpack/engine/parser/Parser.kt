@@ -37,6 +37,7 @@ class Parser(private val tokens: List<Token>) {
     private var statementDepth = 0
     private var pendingCommandAnnotations: CommandAnnotations = CommandAnnotations.EMPTY
     private var pendingListenerAnnotations: ListenerAnnotations = ListenerAnnotations.EMPTY
+    private val annotationConstants = mutableMapOf<String, MetadataValue>()
 
     private fun peek(): Token = tokens[pos]
     private fun peek(offset: Int): Token =
@@ -82,7 +83,9 @@ class Parser(private val tokens: List<Token>) {
             } else {
                 stmts.addAll(pendingMeta)
             }
-            stmts.add(parseTopLevelStatement())
+            val stmt = parseTopLevelStatement()
+            stmts.add(stmt)
+            registerAnnotationConstant(stmt)
             skipNewlines()
         }
         return stmts
@@ -107,23 +110,38 @@ class Parser(private val tokens: List<Token>) {
         var usage: String? = null
         var aliases = emptyList<String>()
         val placeholders = linkedMapOf<String, CommandPlaceholder>()
+        val suggestions = linkedMapOf<String, CommandSuggestion>()
         for (m in meta) {
             when (m.key) {
-                "description" -> description = m.value
-                "permission" -> permission = m.value
-                "permission_message" -> permissionMessage = m.value
-                "usage" -> usage = m.value
-                "aliases" -> aliases = parseAliasList(m.value)
+                "description" -> description = metadataScalar(m)
+                "permission" -> permission = metadataScalar(m)
+                "permission_message" -> permissionMessage = metadataScalar(m)
+                "usage" -> usage = metadataScalar(m)
+                "aliases" -> aliases = when (val value = m.value) {
+                    is MetadataValue.Scalar -> listOf(value.value)
+                    is MetadataValue.Bool -> throw ParseException("Metadata '@aliases' expects a string or string array constant", m.line)
+                    is MetadataValue.StringList -> value.values
+                    is MetadataValue.Dynamic -> throw ParseException("Metadata '@aliases' only accepts constants", m.line)
+                }
                 "placeholder" -> {
                     val target = m.target
                         ?: throw ParseException("Metadata '@placeholder' expects a parameter name and a string literal value", m.line)
-                    if (placeholders.put(target, CommandPlaceholder(m.value, m.line)) != null) {
+                    if (placeholders.put(target, CommandPlaceholder(metadataScalar(m), m.line)) != null) {
                         throw ParseException("Placeholder for command parameter '$target' is already declared", m.line)
+                    }
+                }
+                "suggest" -> {
+                    val target = m.target
+                        ?: throw ParseException("Metadata '@suggest' expects a command parameter name and expression", m.line)
+                    val expression = (m.value as? MetadataValue.Dynamic)?.expression
+                        ?: throw ParseException("Metadata '@suggest' expects a suggestion expression", m.line)
+                    if (suggestions.put(target, CommandSuggestion(expression, m.line)) != null) {
+                        throw ParseException("Suggestion for command parameter '$target' is already declared", m.line)
                     }
                 }
             }
         }
-        return CommandAnnotations(description, permission, permissionMessage, usage, aliases, placeholders)
+        return CommandAnnotations(description, permission, permissionMessage, usage, aliases, placeholders, suggestions)
     }
 
     private fun buildListenerAnnotations(meta: List<Statement.Metadata>): ListenerAnnotations {
@@ -131,20 +149,27 @@ class Parser(private val tokens: List<Token>) {
         var ignoreCancelled = false
         for (m in meta) {
             when (m.key) {
-                "priority" -> priority = m.value
-                "ignoreCancelled" -> ignoreCancelled = m.value.trim().lowercase() == "true"
+                "priority" -> priority = metadataScalar(m)
+                "ignoreCancelled" -> ignoreCancelled = when (val value = m.value) {
+                    is MetadataValue.Bool -> value.value
+                    is MetadataValue.Scalar -> value.value.trim().lowercase() == "true"
+                    is MetadataValue.StringList -> throw ParseException(
+                        "Metadata '@ignoreCancelled' expects a bool or string constant",
+                        m.line,
+                    )
+                    is MetadataValue.Dynamic -> throw ParseException(
+                        "Metadata '@ignoreCancelled' only accepts constants",
+                        m.line,
+                    )
+                }
             }
         }
         return ListenerAnnotations(priority, ignoreCancelled)
     }
 
-    private fun parseAliasList(raw: String): List<String> {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return emptyList()
-        val inner = if (trimmed.startsWith("[") && trimmed.endsWith("]"))
-            trimmed.substring(1, trimmed.length - 1) else trimmed
-        return inner.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    }
+    private fun metadataScalar(metadata: Statement.Metadata): String =
+        (metadata.value as? MetadataValue.Scalar)?.value
+            ?: throw ParseException("Metadata '@${metadata.key}' expects a string literal or string const", metadata.line)
 
     private fun parseTopLevelStatement(): Statement {
         return when (peekType()) {
@@ -158,22 +183,100 @@ class Parser(private val tokens: List<Token>) {
         val line = peek().line
         expect(TokenType.AT, "Expected '@'")
         val key = expect(TokenType.IDENTIFIER, "Expected metadata key after '@'").value
-        val target = if (key == "placeholder") {
-            expect(TokenType.IDENTIFIER, "Metadata '@placeholder' expects a parameter name").value
+        val target = if (key == "placeholder" || key == "suggest") {
+            expect(
+                TokenType.IDENTIFIER,
+                "Metadata '@$key' expects a command parameter name",
+            ).value
         } else {
             null
         }
-        val value = expect(
-            TokenType.STRING_LITERAL,
-            if (key == "placeholder") "Metadata '@placeholder' expects a string literal placeholder"
-            else "Metadata '@$key' expects a string literal value",
-        ).value
+        val value = parseMetadataValue(key)
         if (!isAtEnd() && !check(TokenType.NEWLINE) && !check(TokenType.SEMICOLON)) {
-            val expected = if (key == "placeholder") "a parameter name and one string literal value"
-                else "exactly one string literal value"
+            val expected = when (key) {
+                "placeholder" -> "a parameter name and one string literal or string const"
+                "aliases" -> "one string, string array, or compatible const"
+                "ignoreCancelled" -> "one bool, string, or compatible const"
+                "suggest" -> "a command parameter name and one expression"
+                else -> "one string literal or string const"
+            }
             throw ParseException("Metadata '@$key' must contain $expected", peek().line)
         }
         return Statement.Metadata(key, value, line, target)
+    }
+
+    private fun parseMetadataValue(key: String): MetadataValue = when {
+        key == "suggest" -> MetadataValue.Dynamic(parseExpression())
+        key == "aliases" && check(TokenType.LBRACKET) -> parseMetadataStringList()
+        check(TokenType.STRING_LITERAL) -> MetadataValue.Scalar(advance().value)
+        check(TokenType.BOOL_LITERAL) -> MetadataValue.Bool(advance().value == "true")
+        check(TokenType.IDENTIFIER) -> {
+            val reference = advance()
+            annotationConstants[reference.value]
+                ?: throw ParseException(
+                    "Metadata '@$key' must reference an annotation-compatible const declared earlier",
+                    reference.line,
+                )
+        }
+        else -> throw ParseException(
+            when (key) {
+                "placeholder" -> "Metadata '@placeholder' expects a string literal or string const"
+                "aliases" -> "Metadata '@aliases' expects a string, string array, or compatible const"
+                "ignoreCancelled" -> "Metadata '@ignoreCancelled' expects a bool, string, or compatible const"
+                else -> "Metadata '@$key' expects a string literal or string const"
+            },
+            peek().line,
+        )
+    }
+
+    private fun parseMetadataStringList(): MetadataValue.StringList {
+        expect(TokenType.LBRACKET, "Expected '[' to start alias array")
+        skipNewlines()
+        val values = mutableListOf<String>()
+        while (!check(TokenType.RBRACKET) && !isAtEnd()) {
+            values += when {
+                check(TokenType.STRING_LITERAL) -> advance().value
+                check(TokenType.IDENTIFIER) -> {
+                    val reference = advance()
+                    (annotationConstants[reference.value] as? MetadataValue.Scalar)?.value
+                        ?: throw ParseException(
+                            "Alias array values must be string literals or string consts declared earlier",
+                            reference.line,
+                        )
+                }
+                else -> throw ParseException(
+                    "Alias array values must be string literals or string consts declared earlier",
+                    peek().line,
+                )
+            }
+            skipNewlines()
+            if (!check(TokenType.RBRACKET)) {
+                expect(TokenType.COMMA, "Expected ',' or ']' after alias")
+                skipNewlines()
+            }
+        }
+        expect(TokenType.RBRACKET, "Expected ']' to close alias array")
+        return MetadataValue.StringList(values)
+    }
+
+    private fun registerAnnotationConstant(stmt: Statement) {
+        if (stmt !is Statement.VarDecl || !stmt.isConst || statementDepth != 0) return
+        annotationConstantValue(stmt.initializer)?.let { value ->
+            annotationConstants[stmt.name] = value
+        }
+    }
+
+    private fun annotationConstantValue(expr: Expression): MetadataValue? = when (expr) {
+        is Expression.StringLiteral -> MetadataValue.Scalar(expr.value)
+        is Expression.BoolLiteral -> MetadataValue.Bool(expr.value)
+        is Expression.Identifier -> annotationConstants[expr.name]
+        is Expression.ListLiteral -> {
+            val values = expr.elements.map { element ->
+                (annotationConstantValue(element) as? MetadataValue.Scalar)?.value ?: return null
+            }
+            MetadataValue.StringList(values)
+        }
+        else -> null
     }
 
     private fun parseUsing(): Statement.Using {
@@ -530,6 +633,7 @@ class Parser(private val tokens: List<Token>) {
         }
 
         validateCommandPlaceholders(params, annotations)
+        validateCommandSuggestions(params, annotations)
         return Statement.CommandDecl(access, name, senderName, params, finalItems, annotations, line)
     }
 
@@ -541,6 +645,15 @@ class Parser(private val tokens: List<Token>) {
             }
             if (placeholder.value.isBlank()) {
                 throw ParseException("Placeholder for command parameter '$name' cannot be blank", placeholder.line)
+            }
+        }
+    }
+
+    private fun validateCommandSuggestions(params: List<Param>, annotations: CommandAnnotations) {
+        val paramNames = params.mapTo(linkedSetOf()) { it.name }
+        for ((name, suggestion) in annotations.suggestions) {
+            if (name !in paramNames) {
+                throw ParseException("Suggestion references unknown command parameter '$name'", suggestion.line)
             }
         }
     }

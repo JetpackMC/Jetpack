@@ -5,7 +5,7 @@ sealed class Statement {
 
     data class Metadata(
         val key: String,
-        val value: String,
+        val value: MetadataValue,
         override val line: Int,
         val target: String? = null,
     ) : Statement()
@@ -112,6 +112,13 @@ sealed class Statement {
     ) : Statement()
 }
 
+sealed class MetadataValue {
+    data class Scalar(val value: String) : MetadataValue()
+    data class Bool(val value: Boolean) : MetadataValue()
+    data class StringList(val values: List<String>) : MetadataValue()
+    data class Dynamic(val expression: Expression) : MetadataValue()
+}
+
 data class ListenerAnnotations(
     val priority: String?,
     val ignoreCancelled: Boolean,
@@ -128,13 +135,15 @@ data class CommandAnnotations(
     val usage: String?,
     val aliases: List<String>,
     val placeholders: Map<String, CommandPlaceholder>,
+    val suggestions: Map<String, CommandSuggestion>,
 ) {
     companion object {
-        val EMPTY = CommandAnnotations(null, null, null, null, emptyList(), emptyMap())
+        val EMPTY = CommandAnnotations(null, null, null, null, emptyList(), emptyMap(), emptyMap())
     }
 }
 
 data class CommandPlaceholder(val value: String, val line: Int)
+data class CommandSuggestion(val expression: Expression, val line: Int)
 
 sealed class ManifestValue {
     data class Scalar(val value: String) : ManifestValue()
