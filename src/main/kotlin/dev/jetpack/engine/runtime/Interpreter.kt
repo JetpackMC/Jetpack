@@ -146,6 +146,7 @@ data class CommandParam(
     val typeName: String?,
     val declaredType: JetType?,
     val default: (suspend () -> JetValue)?,
+    val placeholder: String,
     val line: Int,
 )
 
@@ -490,6 +491,7 @@ class Interpreter(
                 typeName = param.typeName?.name,
                 declaredType = param.typeName?.toJetTypeOrNull(),
                 default = param.default?.let { expr -> { evalExpr(expr, scope) } },
+                placeholder = stmt.annotations.placeholders[param.name]?.value ?: param.name,
                 line = stmt.line,
             )
         }
