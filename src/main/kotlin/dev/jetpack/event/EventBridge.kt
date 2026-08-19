@@ -45,7 +45,7 @@ object EventBridge {
         callback: (JetValue) -> Unit,
     ): ListenerHandle {
         val eventClass = resolveEventClass(eventClassName)
-        requireNotNull(eventClass) { "Unknown event type '$eventClassName'" }
+        requireNotNull(eventClass) { "Event type '$eventClassName' is not available on this server" }
         val bindingKey = bindingKey(eventClassName, priority, ignoreCancelled)
         val binding = bindings.computeIfAbsent(bindingKey) {
             EventBinding(eventClassName, eventClass, priority, ignoreCancelled)
@@ -124,7 +124,7 @@ object EventBridge {
         NativeBridge.overlayObject(base, extraFields)
 
     private fun resolveEventClass(name: String): Class<out Event>? =
-        JetpackEvent.resolve(name)?.eventClass
+        EventCatalog.eventClass(name)
 
     private fun reconcileBinding(plugin: JetpackPlugin, binding: EventBinding) {
         val key = bindingKey(binding.eventClassName, binding.priority, binding.ignoreCancelled)

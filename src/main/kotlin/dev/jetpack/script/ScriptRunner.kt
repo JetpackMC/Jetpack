@@ -18,8 +18,8 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder
 import com.mojang.brigadier.tree.LiteralCommandNode
 import dev.jetpack.JetpackPlugin
 import dev.jetpack.engine.runtime.builtins.RegistrationHandle
-import dev.jetpack.event.JetpackEvent
 import dev.jetpack.event.EventBridge
+import dev.jetpack.event.EventCatalog
 import dev.jetpack.engine.parser.ast.JetType
 import dev.jetpack.engine.parser.ast.Statement
 import dev.jetpack.engine.runtime.CommandHandle
@@ -58,6 +58,14 @@ import java.util.IdentityHashMap
 import java.util.concurrent.CompletableFuture
 import java.util.logging.Level
 import kotlin.coroutines.CoroutineContext
+
+private object InertListenerHandle : ListenerHandle {
+    override fun activate(): Boolean = false
+    override fun deactivate(): Boolean = false
+    override fun destroy(): Boolean = false
+    override fun trigger(sender: JetValue): Boolean = false
+    override fun isActive(): Boolean = false
+}
 
 class ScriptRunner(private val plugin: JetpackPlugin) {
 
@@ -333,15 +341,15 @@ class ScriptRunner(private val plugin: JetpackPlugin) {
             ignoreCancelled: Boolean,
             body: suspend (JetValue) -> Unit,
         ): ListenerHandle {
-            if (JetpackEvent.resolve(eventType) == null) {
-                reportError(module.meta.scriptId, "Unknown event type '$eventType'", line, module.sourceLines)
-                return object : ListenerHandle {
-                    override fun activate(): Boolean = false
-                    override fun deactivate(): Boolean = false
-                    override fun destroy(): Boolean = false
-                    override fun trigger(sender: JetValue): Boolean = false
-                    override fun isActive(): Boolean = false
-                }
+            val rejection = when {
+                !EventCatalog.isKnown(eventType) -> "Unknown event type '$eventType'"
+                !EventCatalog.isSupported(eventType) ->
+                    "Event '$eventType' is not available on this server version"
+                else -> null
+            }
+            if (rejection != null) {
+                reportError(module.meta.scriptId, rejection, line, module.sourceLines)
+                return InertListenerHandle
             }
             val eventPriority = priority?.let {
                 runCatching { EventPriority.valueOf(it.uppercase()) }.getOrNull()
