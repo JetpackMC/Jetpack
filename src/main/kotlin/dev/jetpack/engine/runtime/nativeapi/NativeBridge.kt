@@ -30,6 +30,8 @@ private data class NativeObjectHandle(
 )
 
 object NativeBridge {
+    private val nativeRootPackages = listOf("org.bukkit.", "io.papermc.paper.")
+
     private val methodCache = ConcurrentHashMap<Class<*>, Map<String, List<Method>>>()
     private val staticMethodCache = ConcurrentHashMap<Class<*>, Map<String, List<Method>>>()
     private val fieldCache = ConcurrentHashMap<Class<*>, Map<String, Field>>()
@@ -544,7 +546,7 @@ object NativeBridge {
     }
 
     private fun loadClass(name: String): Class<*>? {
-        if (!name.startsWith("org.bukkit.")) return null
+        if (nativeRootPackages.none { name.startsWith(it) }) return null
         val loaders = listOf(
             Thread.currentThread().contextClassLoader,
             NativeBridge::class.java.classLoader,
